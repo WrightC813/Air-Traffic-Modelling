@@ -23,10 +23,10 @@ class Airport:
         #name is display name
         self.name = name
         #df stores all arrival and departure information
-        self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment'])
+        self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Number of Planes', 'Waiting Times'])
         #df storing time segments of data, with download status
         self.segments_df = pd.DataFrame(columns=['Date', 'Departure', 'Time Slot', 'Downloaded'])
-        self.mean_delay = 0.5
+        self.mean_delay = 0.4
         self.date_dict = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6,
                      'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
         #df to store partial downloads
@@ -48,7 +48,7 @@ class Airport:
         
     def get_data_segment(self):
         if self.segments_df.tail(24)['Downloaded'].all():
-            print(f'{self.name} has all available data downloaded')
+            #print(f'{self.name} has all available data downloaded')
             return None
         
         if len(self.partial_df)> 0:
@@ -81,6 +81,7 @@ class Airport:
         if blocked:
             print('Download not completed, suspect website blocked us')
             return None
+
         
         self.data_df = (pd.concat([self.data_df,df_t], ignore_index=True).sort_values('DateTime')).drop_duplicates(subset=['Flight Code', 'DateTime'])
         self.segments_df.loc[self.segments_df.index[ind],'Downloaded'] = True
@@ -194,8 +195,12 @@ class Airport:
             
         html2 = page.content()
         soup2 = bs4.BeautifulSoup(html2, 'html.parser')
+        
+        if 'DATE IS OUT OF RANGE' in soup2.get_text():
+            print(f'{flight_code} failed, date now out of range')
+            return page, pd.DataFrame(), False
             
-        if flight_code not in soup2.get_text():
+        if flight_code not in soup2.get_text().strip('()'):
             print(f'{flight_code} failed, code not found on page')
             return page, pd.DataFrame(), True
         
@@ -203,9 +208,7 @@ class Airport:
             print(f'{flight_code} failed, flight cancelled')
             return page, pd.DataFrame(), False
         
-        if 'DATE IS OUT OF RANGE' in soup2.get_text():
-            print(f'{flight_code} failed, date now out of range')
-            return page, pd.DataFrame(), False
+        
         
         time_tags = soup2.find_all(self.time_tag)
         depart_date = soup2.find(self.depart_date_tag)
@@ -330,6 +333,8 @@ class Airport:
         return self.data_df
     
     def compute_model_data(self):
+        if len(self.data_df) == 0:
+            return
         #data = all_airports[i].return_data()
         self.data_df = self.data_df.sort_values('DateTime')
         self.data_df['Number of Planes'] = self.data_df['Increment'].cumsum()
@@ -340,6 +345,8 @@ class Airport:
         self.data_df['Waiting Times'] = time_deltas
         
     def set_dtype(self):
+        if len(self.data_df) == 0:
+            return
         self.data_df['Flight Code']= self.data_df['Flight Code'].astype('str')
         self.data_df['DateTime']= pd.to_datetime(self.data_df['DateTime'])
         self.data_df['Time Zone']= self.data_df['Time Zone'].astype('category')
@@ -352,16 +359,25 @@ if __name__ == '__main__':
     with open('airport_data.pickle', 'rb') as f:
         all_airports = pickle.load(f)
     print('Data loaded')
+    # PIK = Airport('PIK', 'Glasgow Prestwick')
+    # all_airports.append(PIK)
     random.shuffle(all_airports)
     for A in all_airports:
+        
+        # if A.name != 'Edinburgh':
+        #     continue
         A.fill_segments_df()
         A.get_data_segment()
         if len(A.partial_df) > 0:
             print(A.partial_df)
         A.compute_model_data()
         A.set_dtype()
-
-        time.sleep(random.expovariate(2))
+        n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
+        if n > 0:
+            print(f'{n} time segments still to download')
+        else:
+            print(f'{A.name} has all available data downloaded')
+        time.sleep(random.expovariate(1))
     
     with open('airport_data.pickle', 'wb') as f:
         pickle.dump(all_airports, f, pickle.HIGHEST_PROTOCOL)
