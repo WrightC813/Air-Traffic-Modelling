@@ -183,6 +183,12 @@ class Airport:
         
         time.sleep(random.expovariate(self.mean_delay))
         try:
+            #Gets scheduled times in case flight date now out of range
+            l = tag.get_text().split(':')
+            #print(l)
+            expected_depart = [l[0][-2:], l[1][:2]]
+            expected_arrival = [l[1][-2:], l[2][:2]]
+            #print(expected_depart,expected_arrival)
             page.locator(f'a[href="{href}"]').click()
         except:
             print(f'{flight_code} failed, could not click flight row')
@@ -197,8 +203,25 @@ class Airport:
         soup2 = bs4.BeautifulSoup(html2, 'html.parser')
         
         if 'DATE IS OUT OF RANGE' in soup2.get_text():
-            print(f'{flight_code} failed, date now out of range')
-            return page, pd.DataFrame(), False
+            print(f'{flight_code} failed, date now out of range. Trying Expected Values')
+            try:
+                if departure:
+                    t = expected_depart
+                    inc = -1
+                else:
+                    t = expected_arrival
+                    inc = 1
+                url = page.url.split('&')
+                date = url[-2].split('=')[-1]
+                month = url[-3].split('=')[-1]
+                year = url[-4].split('=')[-1]
+                dts = datetime.datetime(int(year), int(month), int(date), int(t[0]), int(t[1]))
+                df = pd.DataFrame([{'Flight Code':flight_code,'DateTime':dts, 'Time Zone':None,  'Increment':inc, 'Href':href}])
+                print(df)
+                return page, df, False
+            except:
+                print('Could not use expected values')
+                return page, pd.DataFrame(), False
             
         if flight_code not in soup2.get_text().strip('()'):
             print(f'{flight_code} failed, code not found on page')
