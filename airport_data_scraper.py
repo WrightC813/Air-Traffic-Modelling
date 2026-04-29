@@ -13,7 +13,7 @@ import random
 import time
 import datetime
 import pickle
-import numpy as np
+import sqlite3
     
 
 class Airport:
@@ -23,14 +23,14 @@ class Airport:
         #name is display name
         self.name = name
         #df stores all arrival and departure information
-        self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Number of Planes', 'Waiting Times'])
+        self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code'])
         #df storing time segments of data, with download status
         self.segments_df = pd.DataFrame(columns=['Date', 'Departure', 'Time Slot', 'Downloaded'])
         self.mean_delay = 0.4
         self.date_dict = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6,
                      'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
         #df to store partial downloads
-        self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Href'])
+        self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code', 'Href'])
         self.partial_params = {}
         
         
@@ -48,7 +48,6 @@ class Airport:
         
     def get_data_segment(self):
         if self.segments_df.tail(24)['Downloaded'].all():
-            #print(f'{self.name} has all available data downloaded')
             return None
         
         if len(self.partial_df)> 0:
@@ -82,7 +81,6 @@ class Airport:
             print('Download not completed, suspect website blocked us')
             return None
 
-        
         self.data_df = (pd.concat([self.data_df,df_t], ignore_index=True).sort_values('DateTime')).drop_duplicates(subset=['Flight Code', 'DateTime'])
         self.segments_df.loc[self.segments_df.index[ind],'Downloaded'] = True
         
@@ -185,10 +183,9 @@ class Airport:
         try:
             #Gets scheduled times in case flight date now out of range
             l = tag.get_text().split(':')
-            #print(l)
             expected_depart = [l[0][-2:], l[1][:2]]
             expected_arrival = [l[1][-2:], l[2][:2]]
-            #print(expected_depart,expected_arrival)
+            other_airport = l[2][2:5]
             page.locator(f'a[href="{href}"]').click()
         except:
             print(f'{flight_code} failed, could not click flight row')
@@ -216,8 +213,8 @@ class Airport:
                 month = url[-3].split('=')[-1]
                 year = url[-4].split('=')[-1]
                 dts = datetime.datetime(int(year), int(month), int(date), int(t[0]), int(t[1]))
-                df = pd.DataFrame([{'Flight Code':flight_code,'DateTime':dts, 'Time Zone':None,  'Increment':inc, 'Href':href}])
-                print(df)
+                df = pd.DataFrame([{'Flight Code':flight_code,'DateTime':dts.strftime("%Y-%m-%d %H:%M"), 'Time Zone':None,  'Increment':inc, 'Other Airport Code':other_airport, 'Href':href}])
+                #print(df)
                 return page, df, False
             except:
                 print('Could not use expected values')
@@ -252,7 +249,7 @@ class Airport:
             t = ti.split(':')
             d = da.split('-')
             dts = datetime.datetime(int(d[2]), self.date_dict[d[1]], int(d[0]), int(t[0]), int(t[1]))
-            df = pd.DataFrame([{'Flight Code':flight_code,'DateTime':dts, 'Time Zone':tz,  'Increment':inc, 'Href':href}])
+            df = pd.DataFrame([{'Flight Code':flight_code,'DateTime':dts.strftime("%Y-%m-%d %H:%M"), 'Time Zone':tz,  'Increment':inc, 'Other Airport Code':other_airport, 'Href':href}])
             return page, df, False
         except:
             print(f'{flight_code} failed, tags contain no time data')
@@ -299,7 +296,7 @@ class Airport:
                 num_pages = max(num_pages,int(b.text))
 
         
-        df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Href'])
+        df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code', 'Href'])
 
         for i in range(num_pages):
             print(f'Page {i+1} of {num_pages}:')
@@ -343,58 +340,68 @@ class Airport:
             self.partial_params['Date'] = datetime.date(year, month, day)
             self.partial_params['Departure'] = departure
             self.partial_params['Time Slot'] = int(hour/6)
-            return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment']], blocked
+            return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code']], blocked
 
         
         if not blocked:
             df = pd.concat([self.partial_df,df], ignore_index=True)
             self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Href'])
             self.partial_params = {}
-            return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment']], blocked
+            return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code']], blocked
         
     def return_data(self):
         return self.data_df
     
-    def compute_model_data(self):
-        if len(self.data_df) == 0:
-            return
-        #data = all_airports[i].return_data()
-        self.data_df = self.data_df.sort_values('DateTime')
-        self.data_df['Number of Planes'] = self.data_df['Increment'].cumsum()
-        time_deltas = [np.nan]
-        for j in range(len(self.data_df) - 1):
-            time_deltas.append((self.data_df['DateTime'].iloc[j+1] - self.data_df['DateTime'].iloc[j]).total_seconds() // 60)
-        
-        self.data_df['Waiting Times'] = time_deltas
-        
-    def set_dtype(self):
-        if len(self.data_df) == 0:
-            return
-        self.data_df['Flight Code']= self.data_df['Flight Code'].astype('str')
-        self.data_df['DateTime']= pd.to_datetime(self.data_df['DateTime'])
-        self.data_df['Time Zone']= self.data_df['Time Zone'].astype('category')
-        self.data_df['Increment']= self.data_df['Increment'].astype('int32')
-        self.data_df['Number of Planes']= self.data_df['Number of Planes'].astype('int32')
-        
+    
+    def reset_df(self):
+        self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code'])
+    
 
             
 if __name__ == '__main__':
+    #Load python objects containing airport information and all partial downloads
     with open('airport_data.pickle', 'rb') as f:
         all_airports = pickle.load(f)
     print('Data loaded')
-    # PIK = Airport('PIK', 'Glasgow Prestwick')
-    # all_airports.append(PIK)
+    #Shuffle to randomise the order of downloads 
     random.shuffle(all_airports)
+
+    #Initialise database connection
+    conn = sqlite3.connect('airport_data.db', isolation_level=None)
+    #Add airports table if it doesn't already exist
+    conn.execute('CREATE TABLE IF NOT EXISTS airports (name TEXT NOT NULL, code TEXT NOT NULL) STRICT')
+    
+    #Add flight data table if it doesn't already exist
+    conn.execute('CREATE TABLE IF NOT EXISTS flights (airport TEXT NOT NULL, flight_code TEXT, flight_datetime TEXT, timezone TEXT, increment INT, other_airport TEXT) STRICT')
     for A in all_airports:
+        name = A.name.lower().replace(' ','_')
+        #Add airport to airports table if not already there
+        if conn.execute('SELECT * FROM airports WHERE name=?', [A.name]).rowcount == 0:
+            conn.execute('INSERT INTO airports VALUES (?,?)', [A.name,A.code])
         
-        # if A.name != 'Edinburgh':
-        #     continue
+        #################################
+        # for f in conn.execute(f'SELECT * FROM {name}').fetchall():
+        #     conn.execute('INSERT INTO flights VALUES (?,?,?,?,?,?)',[A.code, f[0], f[1], f[2], f[3], f[4]])
+        
+        # conn.execute(f'DROP TABLE {name}')
+        #################################
+        
+        #Fetching data for airport A
+        A.reset_df()
         A.fill_segments_df()
         A.get_data_segment()
+        #If data gathering interupted, don't add to database.
         if len(A.partial_df) > 0:
+            print('Data collection incomplete')
             print(A.partial_df)
-        A.compute_model_data()
-        A.set_dtype()
+        #If data gathering complete, add new entries to database
+        else:
+            print('Saving to database')
+            for f in A.data_df.itertuples():
+                conn.execute('INSERT INTO flights VALUES (?,?,?,?,?,?)', [A.code, f[1], f[2], f[3], f[4], f[5]])
+            #A.reset_df()
+        
+        #Displaying how much more availbale data for airport A
         n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
         if n > 0:
             print(f'{n} time segments still to download')
@@ -402,6 +409,9 @@ if __name__ == '__main__':
             print(f'{A.name} has all available data downloaded')
         time.sleep(random.expovariate(1))
     
+    #Saving both python airport objects and closing database connection
     with open('airport_data.pickle', 'wb') as f:
         pickle.dump(all_airports, f, pickle.HIGHEST_PROTOCOL)
+    conn.close()
     print('Data objects saved')
+
