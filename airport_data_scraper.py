@@ -26,7 +26,7 @@ class Airport:
         self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code'])
         #df storing time segments of data, with download status
         self.segments_df = pd.DataFrame(columns=['Date', 'Departure', 'Time Slot', 'Downloaded'])
-        self.mean_delay = 0.4
+        self.mean_delay = 0.5
         self.date_dict = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6,
                      'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
         #df to store partial downloads
@@ -35,6 +35,7 @@ class Airport:
         
         
     def fill_segments_df(self):
+        #function to compute dates, times and arrivals/departures to add the the download queue
         today = datetime.date.today()
         day = datetime.timedelta(days=1)
         dates = [today - day, today - 2*day, today - 3*day]
@@ -47,9 +48,12 @@ class Airport:
         self.segments_df = self.segments_df.sort_values(['Date', 'Departure', 'Time Slot'])
         
     def get_data_segment(self):
+        #Primary function to obtain a segment of flight data
+        #If all recent data is already downloaded, return None
         if self.segments_df.tail(24)['Downloaded'].all():
             return None
         
+        #If the previous download was interupted, continue it
         if len(self.partial_df)> 0:
             print('Partial Params', self.partial_params)
             ind = self.segments_df.loc[(self.segments_df['Departure'] == self.partial_params['Departure']) & ((self.segments_df['Date'] == self.partial_params['Date']) & (self.segments_df['Time Slot'] == self.partial_params['Time Slot']))].index[0]
@@ -72,6 +76,7 @@ class Airport:
             print(f'{self.name}: Departures on {day}-{month}-{year} between {hour}h and {hour + 6}h')
         if not departure:
             print(f'{self.name}: Arrivals on {day}-{month}-{year} between {hour}h and {hour + 6}h')
+        
         try:
             df_t, blocked = self.get_data(departure, self.code, year, month, day, hour)
         except:
@@ -81,11 +86,13 @@ class Airport:
             print('Download not completed, suspect website blocked us')
             return None
 
+        #If sucessful and not blocked, store data and mark this segment as downloaded
         self.data_df = (pd.concat([self.data_df,df_t], ignore_index=True).sort_values('DateTime')).drop_duplicates(subset=['Flight Code', 'DateTime'])
         self.segments_df.loc[self.segments_df.index[ind],'Downloaded'] = True
         
         
     def gen_link(self, departure, airport, year, month, day, hour):
+        #Generate the website address
         link = 'https://www.flightstats.com/v2/flight-tracker/'
         if departure:
             link = link + 'departures/'
@@ -95,6 +102,7 @@ class Airport:
         return link
     
     def get_nav_buttons(self,tag):
+        #Function to find html tags for navigation buttons
         if tag.name == "div":
             try:
                 classes = tag.get("class")
@@ -104,6 +112,7 @@ class Airport:
                 return False
                     
     def table_tag(self,tag):
+        #Function to find html tags of rows of the table of flights
         if tag.name == "a":
             try:
                 classes = tag.get("class")
@@ -114,6 +123,7 @@ class Airport:
                 return False
             
     def time_tag(self,tag):
+        #Function to find the times from the page for a specific flight
         pr = tag.find_previous_sibling('div')
         try:
             if pr.string == 'Actual':
@@ -122,6 +132,7 @@ class Airport:
             return False
            
     def depart_date_tag(self,tag):
+        #Function to find the date of departure for a specific flight
         pr = tag.find_previous_sibling('div')
         try:
             if pr.string == 'Flight Departure Times':
@@ -130,6 +141,7 @@ class Airport:
             return False
           
     def arrive_date_tag(self,tag):
+        #Function to find the date of arrival for a specific flight
         pr = tag.find_previous_sibling('div')
         try:
             if pr.string == 'Flight Arrival Times':
@@ -138,24 +150,30 @@ class Airport:
             return False
              
     def set_page(self, page, num_pages, target_page):
+        #Function to navigate to a specific page of flights for a given data segment
+        #If only one page, nothing to do
         if num_pages == 1:
             return page, False
+        #Wait for the page to load by looking for expected item
         try:
             expect(page.get_by_text('→', exact=True).first).to_be_visible()
         except:
             return page, True
         visible_buttons = []
+        #Find currently visible page number buttons
         for i in range(num_pages):
             if page.get_by_text(f'{i+1}', exact=True).first.is_visible():
                 visible_buttons.append(i+1)
                 
+        #If already visible, press desired page button
         if target_page in visible_buttons:
             page.get_by_text(f'{target_page}', exact=True).first.click()
             return page, False
         
+        #Otherwise click through until we reach desired page
         elif target_page < min(visible_buttons):
             for j in range(min(visible_buttons) - target_page):
-                time.sleep(random.expovariate(self.mean_delay))
+                time.sleep(0.1 + random.expovariate(self.mean_delay))
                 page.get_by_text(f'{min(visible_buttons) - j}', exact=True).first.click()
                 expect(page.get_by_text(f'{min(visible_buttons) - j - 1}', exact=True).first).to_be_visible()
 
@@ -164,7 +182,7 @@ class Airport:
         
         else:
             for j in range(target_page - max(visible_buttons)):
-                time.sleep(random.expovariate(self.mean_delay))
+                time.sleep(0.1 + random.expovariate(self.mean_delay))
                 page.get_by_text(f'{max(visible_buttons) + j}', exact=True).first.click()
                 expect(page.get_by_text(f'{max(visible_buttons) + j + 1}', exact=True).first).to_be_visible()
                 
@@ -172,14 +190,16 @@ class Airport:
             return page, False
          
     def get_flight_data(self, page, ind, num_pages, tag, departure):
+        #Function to extract data from one given flight
         page, blocked = self.set_page(page, num_pages, ind)
         if blocked:
             return page, pd.DataFrame(), True
 
+        #Obtain the flight code from the website address
         href = tag.get('href')
         flight_code = ' '.join(href.split('?')[0].split('/')[-2:])
         
-        time.sleep(random.expovariate(self.mean_delay))
+        time.sleep(0.1 + random.expovariate(self.mean_delay))
         try:
             #Gets scheduled times in case flight date now out of range
             l = tag.get_text().split(':')
@@ -190,15 +210,18 @@ class Airport:
         except:
             print(f'{flight_code} failed, could not click flight row')
             return page, pd.DataFrame(), True  
+        #Load, if possible, the page for the specified flight
         try:
             expect(page.locator('a[href="/v2/historical-flight/search"]').first).to_be_visible()
         except:
             print(f'{flight_code} failed, page did not load')
             return page, pd.DataFrame(), True 
             
+        #Extract the html of the page
         html2 = page.content()
         soup2 = bs4.BeautifulSoup(html2, 'html.parser')
         
+        #If date is now out of range, use the scheduled data if possible
         if 'DATE IS OUT OF RANGE' in soup2.get_text():
             print(f'{flight_code} failed, date now out of range. Trying Expected Values')
             try:
@@ -220,16 +243,21 @@ class Airport:
                 print('Could not use expected values')
                 return page, pd.DataFrame(), False
             
-        if flight_code not in soup2.get_text().strip('()'):
-            print(f'{flight_code} failed, code not found on page')
-            return page, pd.DataFrame(), True
+        #Dealing with certain known exceptional cases
+        if 'Flight Status Not Available' in soup2.get_text():
+            print(f'{flight_code} failed, flight status not available')
+            return page, pd.DataFrame(), False
         
         if 'Flight Cancelled' in soup2.get_text():
             print(f'{flight_code} failed, flight cancelled')
             return page, pd.DataFrame(), False
         
+        #Aims to catch when the website has blocked us, as we always expect the flight code on the page
+        if flight_code not in soup2.get_text().strip('()'):
+            print(f'{flight_code} failed, code not found on page')
+            return page, pd.DataFrame(), True
         
-        
+        #Obtain the flight data
         time_tags = soup2.find_all(self.time_tag)
         depart_date = soup2.find(self.depart_date_tag)
         arrival_date = soup2.find(self.arrive_date_tag)
@@ -257,6 +285,7 @@ class Airport:
         
         
     def get_data(self, departure, airport, year, month, day, hour):
+        #Function to manage the web session for one segment of data
         link = self.gen_link(departure, airport, year, month, day, hour)
         blocked = False
         
@@ -269,10 +298,10 @@ class Airport:
         #clear cookie popup
         try:
             expect(page.get_by_role("button", name='Cookies Settings')).to_be_visible()
-            time.sleep(random.expovariate(self.mean_delay))
+            time.sleep(0.1 + random.expovariate(self.mean_delay))
             page.get_by_role('button', name='Cookies Settings').click()
             expect(page.get_by_role("button", name='Confirm My Choices')).to_be_visible()
-            time.sleep(random.expovariate(self.mean_delay))
+            time.sleep(0.1 + random.expovariate(self.mean_delay))
             page.get_by_role('button', name='Confirm My Choices').click()
         except:
             pass
@@ -297,13 +326,15 @@ class Airport:
 
         
         df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code', 'Href'])
-
+        
+        #Loop through all the pages of flights
         for i in range(num_pages):
             print(f'Page {i+1} of {num_pages}:')
             self.set_page(page, num_pages, i+1)
 
             soup1 = bs4.BeautifulSoup(page.content(),'html.parser')
             selected = soup1.find_all(self.table_tag)
+            #Loop through flights on this page
             for tag in selected:
                 href = tag.get('href')
                 flight_code = ' '.join(href.split('?')[0].split('/')[-2:])
@@ -315,7 +346,7 @@ class Airport:
                     page, df_t, blocked_t = self.get_flight_data(page, i+1, num_pages, tag, departure)
                 except:
                     print('Failed to get data')
-                    time.sleep(random.expovariate(self.mean_delay))
+                    time.sleep(0.1 + random.expovariate(self.mean_delay))
                     page.go_back()
                     continue
                 
@@ -328,7 +359,7 @@ class Airport:
                     df = pd.concat([df,df_t], ignore_index=True)
                 except:
                     print(f'{tag.get("href")} failed to add data')
-                time.sleep(random.expovariate(self.mean_delay))
+                time.sleep(0.1 + random.expovariate(self.mean_delay))
                 page.go_back()
             if blocked:
                 break
@@ -348,9 +379,7 @@ class Airport:
             self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Href'])
             self.partial_params = {}
             return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code']], blocked
-        
-    def return_data(self):
-        return self.data_df
+    
     
     
     def reset_df(self):
@@ -379,13 +408,6 @@ if __name__ == '__main__':
         if conn.execute('SELECT * FROM airports WHERE name=?', [A.name]).rowcount == 0:
             conn.execute('INSERT INTO airports VALUES (?,?)', [A.name,A.code])
         
-        #################################
-        # for f in conn.execute(f'SELECT * FROM {name}').fetchall():
-        #     conn.execute('INSERT INTO flights VALUES (?,?,?,?,?,?)',[A.code, f[0], f[1], f[2], f[3], f[4]])
-        
-        # conn.execute(f'DROP TABLE {name}')
-        #################################
-        
         #Fetching data for airport A
         A.reset_df()
         A.fill_segments_df()
@@ -399,7 +421,6 @@ if __name__ == '__main__':
             print('Saving to database')
             for f in A.data_df.itertuples():
                 conn.execute('INSERT INTO flights VALUES (?,?,?,?,?,?)', [A.code, f[1], f[2], f[3], f[4], f[5]])
-            #A.reset_df()
         
         #Displaying how much more availbale data for airport A
         n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
@@ -407,7 +428,7 @@ if __name__ == '__main__':
             print(f'{n} time segments still to download')
         else:
             print(f'{A.name} has all available data downloaded')
-        time.sleep(random.expovariate(1))
+        time.sleep(random.expovariate(2))
     
     #Saving both python airport objects and closing database connection
     with open('airport_data.pickle', 'wb') as f:
