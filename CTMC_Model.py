@@ -388,7 +388,7 @@ class CTMC:
         return np.array(states), np.array(times[:-1] + [T_1])
     
     
-    def model_error(self,N=30):
+    def model_error(self,N=25):
         errors = []
         for i in range(N):
             s,t = self.generate_path(self.states[0], 0, self.times[-1])
