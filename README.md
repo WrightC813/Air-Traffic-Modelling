@@ -10,4 +10,6 @@ airport_traffic_scrapper.py is the code which scrapes the website www.flightstat
 
 air_traffic_model.py imports the database, processes into Pandas dataframes and the trains the model (still working on last part). Also produces time series plots of each airport.
 
-CTMC_Model.py contains class to handle the CTMC model. This class takes care of training the model, generating sample trajectories from the model and estimating the error
+CTMC_Model.py contains class to handle the CTMC model. This class takes care of training the model, generating sample trajectories from the model and estimating the error.
+
+Currently working on the model training, experimenting with different optimisation techniques.
