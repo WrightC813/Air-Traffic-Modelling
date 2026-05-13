@@ -426,10 +426,10 @@ if __name__ == '__main__':
         n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
         if n > 0:
             print(f'{n} time segments still to download')
+            time.sleep(random.expovariate(5))
         else:
             print(f'{A.name} has all available data downloaded')
-        time.sleep(random.expovariate(2))
-    
+
     #Saving both python airport objects and closing database connection
     with open('airport_data.pickle', 'wb') as f:
         pickle.dump(all_airports, f, pickle.HIGHEST_PROTOCOL)

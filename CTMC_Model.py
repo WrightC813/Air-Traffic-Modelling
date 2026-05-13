@@ -402,7 +402,7 @@ class CTMC:
             mask_sim = (np.sum(m_sim[1] >= m_sim[0],axis=1) - np.ones_like(partitions)).astype(int)
             values = np.abs(self.states[mask_data] - s[mask_sim])
             errors.append(self.integrate_step(values, partitions)/partitions[-1])
-        return np.mean(errors), np.std(errors)
+        return np.mean(errors), np.std(errors,ddof=1)/np.sqrt(N)
             
     
 class Custom_RV(sp.stats.rv_continuous):
