@@ -11,9 +11,12 @@ import numpy as np
 import random
 from CTMC_Model import *
 import matplotlib.pyplot as plt
+import pickle
 
+#Start and end times to consider data between
 start_time = '2026-04-26 00:00'
 start_time_pd = pd.Timestamp(start_time)
+end_time = '2026-05-15 00:00'
 
 # %% Loading data to pandas dataframes for training
 conn = sqlite3.connect('airport_data.db', isolation_level=None)
@@ -38,7 +41,7 @@ individual_df_disc = []
 individual_df_cts = []
 for c in codes:
     #getting data for this airport, converting the individual increments to a cumulative sum
-    data_disc = conn.execute('SELECT flight_code, flight_datetime, increment, SUM(increment) OVER (ORDER BY flight_datetime) FROM flights WHERE (airport=? AND flight_datetime >= "2026-04-26 00:00") ORDER BY flight_datetime',[c]).fetchall()
+    data_disc = conn.execute('SELECT flight_code, flight_datetime, increment, SUM(increment) OVER (ORDER BY flight_datetime) FROM flights WHERE (airport=? AND flight_datetime >= ? AND flight_datetime <= ?) ORDER BY flight_datetime',[c,start_time, end_time]).fetchall()
     df_disc = pd.DataFrame(data_disc,columns=('Flight Code', 'Datetime', 'Increment', 'Number of Planes'))
     df_disc['Datetime'] = pd.to_datetime(df_disc['Datetime'])
     #In cases where more than one plane arrives at same datetime, collapse to single entry
@@ -54,7 +57,7 @@ for c in codes:
     individual_df_disc.append(df_disc)
 
     #In cts case, add random number of micro seconds up to one minute, reflecting our ignorance about exact time and to break any ties
-    data_cts = conn.execute('SELECT flight_code, flight_datetime, increment FROM flights WHERE (airport=? AND flight_datetime >= "2026-04-26 00:00") ORDER BY flight_datetime',[c]).fetchall()
+    data_cts = conn.execute('SELECT flight_code, flight_datetime, increment FROM flights WHERE (airport=? AND flight_datetime >= ? AND flight_datetime <= ?) ORDER BY flight_datetime',[c,start_time,end_time]).fetchall()
     df_cts = pd.DataFrame(data_cts,columns=('Flight Code', 'Datetime', 'Increment'))
     df_cts['Datetime'] = pd.to_datetime(df_cts['Datetime']).apply(lambda x: x + pd.Timedelta(random.randint(0,59999999),unit='us'))
     df_cts.sort_values('Datetime', inplace=True)
@@ -76,42 +79,83 @@ for df in individual_df_cts  + individual_df_disc:
 
 
 # %% Fitting CTMC for cts version of dataset
-n_iter = 10
+n_iter = 50
 
 for i, df in enumerate(individual_df_cts):
+    
     name = conn.execute('SELECT name FROM airports WHERE code=?',[codes[i]]).fetchone()[0]
     states = df['State'].values
     times = df['Minutes From Start'].values
-    xi = [180,540,900,1260]
+    
     print(name)
-    ctmc_MLE = CTMC()
-    ctmc_MLE.fit(states,times,xi,a_optim='MLE',xi_optim='fixed',N=n_iter)
-    print(f'Final xi values: {ctmc_MLE.xi}')
     
-    ctmc_PM = CTMC()
-    ctmc_PM.fit(states,times,xi,a_optim='PM',xi_optim='fixed',N=n_iter)
+    # Following uses annealing method to choose xi
     
-    fig, axs = plt.subplots(1,1)
-    axs.set_title(name + ' - MLE')
+    # xi = [360,1080]
+    # ctmc_MLE = CTMC()
+    # ctmc_MLE.fit(states,times,xi,a_optim='MLE',xi_optim='anneal',N=n_iter)
+    # print(f'Final xi values: {ctmc_MLE.xi}')
     
-    for j in range(2):
-        s,t = ctmc_MLE.generate_path(states[0],0,times[-1])
-        axs.step(t,s,where='post', label=f'Sample path {j+1}')
-    axs.step(times,states,where='post',color='green', label='Observed path')
-    axs.legend()
-    axs.plot()
-    
-    fig, axs = plt.subplots(1,1)
-    axs.set_title(name + ' - PM')
-    
-    for j in range(2):
-        s,t = ctmc_PM.generate_path(states[0],0,times[-1])
-        axs.step(t,s,where='post', label=f'Sample path {j+1}')
-    axs.step(times,states,where='post',color='green', label='Observed path')
-    axs.legend()
-    axs.plot()
 
-
-
+    # fig, axs = plt.subplots(1,1)
+    # axs.set_title(name + ' - MLE + Anneal')
+    
+    # for j in range(2):
+    #     s,t = ctmc_MLE.generate_path(states[0],0,times[-1])
+    #     axs.step(t,s,where='post', label=f'Sample path {j+1}')
+    # axs.step(times,states,where='post',color='green', label='Observed path')
+    # axs.legend()
+    # axs.plot()
+    
+    #Following uses random search to find x, comparing different numbers of partitions
+    
+    fig_1, axs_1 = plt.subplots(2,2,sharex=True,sharey=True,figsize=(10,10))
+    fig_1.suptitle(name + ' - Partition Point Error Estimates',fontsize=16, fontweight='bold')
+    
+    fig_2, axs_2 = plt.subplots(4,1,sharex=True,sharey=True, figsize=(10,18))
+    fig_2.suptitle(name + ' - MLE + Random Search',fontsize=16, fontweight='bold')
+    
+    ctmc_2 = CTMC()
+    err_baseline = ctmc_2.fit(states,times,[0],a_optim='MLE',xi_optim='fixed')
+    
+    for K in range(2,6):
+        ctmc_2 = CTMC()
+        xi_list = []
+        err_list = []
+        for i in range(n_iter):
+            xi = np.sort(random.sample(list(range(0,1440)),k=K))
+            print(f'{i+1} - xi values: {xi}')
+            err = ctmc_2.fit(states,times,xi,a_optim='MLE',xi_optim='fixed')
+            xi_list.append(xi)
+            err_list.append(err)
+            
+        #Plotting errors of each xi choice
+        axs_1[K//4,K%2].set_title(f'K = {K}')
+        
+        x = np.array(xi_list)
+        e = np.array(err_list)
+        e_v = e[:,0]
+        e_sd = e[:,1]
+        axs_1[K//4,K%2].plot(x.T, np.vstack([e_v for i in range(K)]), color='blue', alpha=0.5)
+        err_v_2 = np.ravel([[e[0] for i in range(K)] for e in err_list])
+        err_sd_2 = np.ravel([[e[1] for i in range(K)] for e in err_list])
+        axs_1[K//4,K%2].errorbar(np.ravel(x), err_v_2, yerr=err_sd_2, linestyle='None', marker='x')
+        axs_1[K//4,K%2].hlines(y=err_baseline[0],xmin=0,xmax=1440,color='green')
+        axs_1[K//4,K%2].hlines(y=[err_baseline[0] - err_baseline[1],err_baseline[0] + err_baseline[1]],xmin=0,xmax=1440,color='red')
+            
+        #Plotting observed vs simulated data
+        axs_2[K-2].set_title(f'K = {K}')
+        best_ind = np.argmin(err_list,axis=0)[0]
+        xi_best = xi_list[best_ind]
+        err_best = err_list[best_ind]
+        print(f'Best xi values: {xi_best}, error: {err_best[0]} +- {err_best[1]}')
+        ctmc_2.fit(states,times,xi_best,a_optim='MLE',xi_optim='fixed')
+        for j in range(2):
+            s,t = ctmc_2.generate_path(states[0],0,times[-1])
+            axs_2[K-2].step(t,s,where='post', label=f'Sample path {j+1}', alpha = 0.5)
+        axs_2[K-2].step(times,states,where='post',color='green', label='Observed path', alpha = 1)
+        axs_2[K-2].legend()
+    fig_1.show()
+    fig_2.show()
 
 conn.close()

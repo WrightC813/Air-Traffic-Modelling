@@ -8,7 +8,6 @@ Created on Fri Apr  3 19:42:11 2026
 
 import random
 import numpy as np
-import scipy as sp
 
 class CTMC:
     def __init__(self):
@@ -312,20 +311,26 @@ class CTMC:
         
         #fixed xi_optim means we treat xi as fixed, not to be optimised
         if xi_optim == 'fixed':
-            print('Fitted with given xi')
-            print(f'log l: {self.log_l(self.states,self.times,self.a,self.xi)}')
+            #print('Fitted with given xi')
+            #print(f'log l: {self.log_l(self.states,self.times,self.a,self.xi)}')
             err = self.model_error()
-            print(f'expected L1 error: {err[0]} +- {err[1]}')
+            #print(f'expected L1 error: {err[0]} +- {err[1]}')
         
         #anneal xi_optim uses stochastic search with simulated annealing idea to slowly reduce 
         #mobility of the xi
-        if xi_optim == 'anneal':
+        elif xi_optim == 'anneal':
             for i in range(N):
                 self.xi = self.xi_update(self.states,self.times,self.a,self.xi,al=self.xi_mobility(i, N))
                 self.a = a_step(self.states, self.times, self.xi)
                 err = self.model_error()
                 print(f'Iteration {i+1}: log l: {self.log_l(self.states,self.times,self.a,self.xi)}, expected L1 error: {err[0]} +- {err[1]}')
         
+        else:
+            print('Error: invalid value for xi_optim')
+            return None
+        
+        
+        return err
         
     def q(self,i,j,t):
         #Function computing intensity function q_ij at time t, a list of times
@@ -336,13 +341,7 @@ class CTMC:
         #Function computing the integral of a (left cts) step function
         #integral range determined by partition points
         #values is values at each partition point
-        return np.tensordot(np.diff(partition,n=1),np.delete(values,-1,axis=0),axes=(-1,-1))
-        # if len(np.shape(partition)) == 1:
-        #     return np.inner(np.diff(partition,n=1),values[:-1])
-        # else:
-        #     diffs = np.diff(partition,n=1, axis=2)
-        #     return np.matmul(diffs,values[:-1])
-        
+        return np.tensordot(np.diff(partition,n=1),np.delete(values,-1,axis=0),axes=1)
         
     def integrate_q(self,lower,upper,i,j):
         #Function computing integral of q_ij from a to b
@@ -352,23 +351,56 @@ class CTMC:
         for n in range(int(np.min(lower) // 1440),int(np.max(upper) // 1440) + 1):
             partition = np.append(partition,np.array([n*1440 + x for x in self.xi]))
         partition = np.sort(partition)
-        values = self.q(i,j,partition)
+        values = np.outer(self.q(i,j,partition),np.ones_like(upper))
         #Set values outside intended range to zero to get correct integral
-        values[(lower >= partition) | (partition >= upper)] = 0
+        m = np.meshgrid(upper,partition)
+        values[(lower > np.outer(partition,np.ones_like(upper))) | (m[1] > m[0])] = 0
         return self.integrate_step(values,partition)
         
-
+    
+    
+    def jump_time(self,state,time):
+        #Function to compute time of next jump. Using custom sampling procedure as both inverse cdf and rejection sampling don't work in this case
+        probs = []
+        partitions = [time]
+        int_q = 0
+        chosen = False
+        #to replace by some max number of iterations
+        for i in range(len(self.xi)*3):
+            q = self.q(state,state,[partitions[-1]])[0]
+            n = int(partitions[-1] // 1440)
+            next_parts = sorted([float(n*1440 + x) for x in self.xi] + [float((n+1)*1440 + x) for x in self.xi])
+            less = [p > partitions[-1] for p in next_parts]
+            partitions.append(next_parts[less.index(True)])
+            int_add = q*(partitions[-1] - partitions[-2])
+            p = (1-np.exp(int_add))*np.exp(int_q)
+            probs.append(p)
+            int_q += int_add
+            
+            
+            if random.random() <= p/(1-sum(probs[:-1])):
+                chosen = True
+                break
+            
+        if not chosen:
+            print('Jump time exceeds 3 days, set to inf')
+            return np.inf
+        
+        u = random.random()
+        return partitions[-2] + np.log(1 - u + u*np.exp(int_add))/q
 
     def sample_jump(self,start_state,start_time):
         #Generates next jump of the process, assuming we start in start_state at start_time
-        rv = Custom_RV(start_time, lambda x : self.integrate_q(start_time, x, start_state, start_state))
-        new_time = rv.rvs()
-        del rv
-        
-        # if np.all(self.a[start_state,start_state,:] == 0):
-        #     return start_state, np.inf
-        # u = random.random()
-        # new_time = sp.optimize.root_scalar(lambda t: np.log(1-u) - self.integrate_q(start_time, t, start_state, start_state),x0 = start_time, x1 = start_time + 10).root
+        # rv = Custom_RV(start_time, lambda x : self.integrate_q(start_time, x, start_state, start_state))
+        # new_time = rv.rvs()
+        # del rv
+        if np.all(self.q(start_state,start_state,self.xi) == 0):
+            print('Hit absorbing state')
+            return start_state, np.inf
+        new_time = self.jump_time(start_state, start_time)
+        if new_time == np.inf:
+            return start_state, np.inf
+       
         q = [self.q(start_state,j,[new_time])[0] for j in range(self.S)]
         if np.all(q == 0):
             return start_state, new_time
@@ -403,12 +435,3 @@ class CTMC:
             values = np.abs(self.states[mask_data] - s[mask_sim])
             errors.append(self.integrate_step(values, partitions)/partitions[-1])
         return np.mean(errors), np.std(errors,ddof=1)/np.sqrt(N)
-            
-    
-class Custom_RV(sp.stats.rv_continuous):
-    def __init__(self,t_0,q_int):
-        sp.stats.rv_continuous.__init__(self,a=t_0)
-        self.q_int = q_int
-    
-    def _cdf(self,x):
-        return 1 - np.exp(self.q_int(x))

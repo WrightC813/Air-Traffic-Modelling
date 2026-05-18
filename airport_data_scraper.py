@@ -426,7 +426,7 @@ if __name__ == '__main__':
         n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
         if n > 0:
             print(f'{n} time segments still to download')
-            time.sleep(random.expovariate(5))
+            time.sleep(random.expovariate(1))
         else:
             print(f'{A.name} has all available data downloaded')
 
