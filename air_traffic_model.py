@@ -11,7 +11,6 @@ import numpy as np
 import random
 from CTMC_Model import *
 import matplotlib.pyplot as plt
-import pickle
 
 #Start and end times to consider data between
 start_time = '2026-04-26 00:00'

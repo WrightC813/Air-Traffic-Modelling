@@ -36,8 +36,9 @@ class Airport:
         
     def fill_segments_df(self):
         #function to compute dates, times and arrivals/departures to add the the download queue
-        today = datetime.date.today()
-        day = datetime.timedelta(days=1)
+        # self.segments_df['Date'] = self.segments_df['Date'].dt.date
+        today = pd.Timestamp.today().date()
+        day = pd.Timedelta(days=1)
         dates = [today - day, today - 2*day, today - 3*day]
         df_t = pd.DataFrame()
         for d in dates:
@@ -45,7 +46,11 @@ class Airport:
                 for i in range(4):
                     df_t = pd.concat([df_t, pd.DataFrame([{'Date':d, 'Departure':dept, 'Time Slot':i, 'Downloaded':False}])],ignore_index=True)
         self.segments_df = pd.concat([self.segments_df,df_t], ignore_index=True).drop_duplicates(subset=['Date', 'Departure', 'Time Slot'])
-        self.segments_df = self.segments_df.sort_values(['Date', 'Departure', 'Time Slot'])
+        self.segments_df = self.segments_df.sort_values(['Date','Time Slot'])
+        self.segments_df['Date'] = pd.to_datetime(self.segments_df['Date']).apply(lambda x : x.date())
+        self.segments_df['Time Slot']= self.segments_df['Time Slot'].astype('int16')
+        self.segments_df['Departure']= self.segments_df['Departure'].astype('bool')
+        self.segments_df['Downloaded']= self.segments_df['Downloaded'].astype('bool')
         
     def get_data_segment(self):
         #Primary function to obtain a segment of flight data
@@ -402,12 +407,19 @@ if __name__ == '__main__':
     
     #Add flight data table if it doesn't already exist
     conn.execute('CREATE TABLE IF NOT EXISTS flights (airport TEXT NOT NULL, flight_code TEXT, flight_datetime TEXT, timezone TEXT, increment INT, other_airport TEXT) STRICT')
+    t=0
     for A in all_airports:
+        A.partial_params = {}
+        A.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code', 'Href'])
+
+        if t > 2:
+            break
         name = A.name.lower().replace(' ','_')
+        
         #Add airport to airports table if not already there
         if conn.execute('SELECT * FROM airports WHERE name=?', [A.name]).rowcount == 0:
             conn.execute('INSERT INTO airports VALUES (?,?)', [A.name,A.code])
-        
+            
         #Fetching data for airport A
         A.reset_df()
         A.fill_segments_df()
@@ -426,6 +438,7 @@ if __name__ == '__main__':
         n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
         if n > 0:
             print(f'{n} time segments still to download')
+            #t += 1
             time.sleep(random.expovariate(1))
         else:
             print(f'{A.name} has all available data downloaded')
