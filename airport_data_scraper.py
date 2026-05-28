@@ -17,26 +17,41 @@ import sqlite3
     
 
 class Airport:
+    """
+    Object storing the key data for an airport with methods to download flight data
+    Parameters
+    ----------
+    code : str
+        The three letter aiport code
+        
+    name : str
+        The display name of the airport
+    
+    """
     def __init__(self, code, name):
-        #code is airport code used by website
         self.code = code
-        #name is display name
         self.name = name
+        
         #df stores all arrival and departure information
         self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code'])
         #df storing time segments of data, with download status
         self.segments_df = pd.DataFrame(columns=['Date', 'Departure', 'Time Slot', 'Downloaded'])
+        #constant for time delays
         self.mean_delay = 0.5
+        #conversion between numbers and month names
         self.date_dict = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6,
                      'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
         #df to store partial downloads
         self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code', 'Href'])
+        #parameters of partially downloaded data
         self.partial_params = {}
         
         
     def fill_segments_df(self):
-        #function to compute dates, times and arrivals/departures to add the the download queue
-        # self.segments_df['Date'] = self.segments_df['Date'].dt.date
+        """
+        Function to update the table of time slots to add to download queue
+        
+        """
         today = pd.Timestamp.today().date()
         day = pd.Timedelta(days=1)
         dates = [today - day, today - 2*day, today - 3*day]
@@ -45,6 +60,8 @@ class Airport:
             for dept in (True, False):
                 for i in range(4):
                     df_t = pd.concat([df_t, pd.DataFrame([{'Date':d, 'Departure':dept, 'Time Slot':i, 'Downloaded':False}])],ignore_index=True)
+                    
+        #Delete duplicates and set data types
         self.segments_df = pd.concat([self.segments_df,df_t], ignore_index=True).drop_duplicates(subset=['Date', 'Departure', 'Time Slot'])
         self.segments_df = self.segments_df.sort_values(['Date','Time Slot'])
         self.segments_df['Date'] = pd.to_datetime(self.segments_df['Date']).apply(lambda x : x.date())
@@ -53,7 +70,11 @@ class Airport:
         self.segments_df['Downloaded']= self.segments_df['Downloaded'].astype('bool')
         
     def get_data_segment(self):
-        #Primary function to obtain a segment of flight data
+        """
+        Wrapper function for downloading next segment of data
+        
+        """
+
         #If all recent data is already downloaded, return None
         if self.segments_df.tail(24)['Downloaded'].all():
             return None
@@ -82,6 +103,7 @@ class Airport:
         if not departure:
             print(f'{self.name}: Arrivals on {day}-{month}-{year} between {hour}h and {hour + 6}h')
         
+        #Call function to download data
         try:
             df_t, blocked = self.get_data(departure, self.code, year, month, day, hour)
         except:
@@ -97,7 +119,33 @@ class Airport:
         
         
     def gen_link(self, departure, airport, year, month, day, hour):
-        #Generate the website address
+        """
+        Function to generate website link based on time slot information
+        Parameters
+        ----------
+        dearture : bool
+            True if downloading departures, False for arrivals
+            
+        airport : str
+            Three letter airport code
+            
+        year : int
+            year of time slot
+            
+        month : int
+            month of time slot
+            
+        day : int
+            day of time slot
+        
+        hour : int
+            0,1,2,3 for the four timeslots from the website
+            
+        Returns
+        ----------
+        link : str
+            url of flight data page
+        """
         link = 'https://www.flightstats.com/v2/flight-tracker/'
         if departure:
             link = link + 'departures/'
@@ -107,6 +155,19 @@ class Airport:
         return link
     
     def get_nav_buttons(self,tag):
+        """
+        Function checking if HTML tag is a navigation button
+        Parameters
+        ----------
+        tag : tag object
+            tag to check
+        
+        Returns
+         ----------
+        bool 
+            True if tag is navigation button
+        
+        """
         #Function to find html tags for navigation buttons
         if tag.name == "div":
             try:
@@ -117,7 +178,19 @@ class Airport:
                 return False
                     
     def table_tag(self,tag):
-        #Function to find html tags of rows of the table of flights
+        """
+        Function checking if HTML tag is a row of flight data
+        Parameters
+        ----------
+        tag : tag object
+            tag to check
+        
+        Returns
+         ----------
+        bool 
+            True if tag is a row of flight data
+        
+        """
         if tag.name == "a":
             try:
                 classes = tag.get("class")
@@ -128,7 +201,19 @@ class Airport:
                 return False
             
     def time_tag(self,tag):
-        #Function to find the times from the page for a specific flight
+        """
+        Function checking if HTML tag is flight time
+        Parameters
+        ----------
+        tag : tag object
+            tag to check
+        
+        Returns
+         ----------
+        bool 
+            True if tag is a flight time
+        
+        """
         pr = tag.find_previous_sibling('div')
         try:
             if pr.string == 'Actual':
@@ -137,7 +222,19 @@ class Airport:
             return False
            
     def depart_date_tag(self,tag):
-        #Function to find the date of departure for a specific flight
+        """
+        Function checking if HTML tag is a departure date
+        Parameters
+        ----------
+        tag : tag object
+            tag to check
+        
+        Returns
+         ----------
+        bool 
+            True if tag is a departure date
+        
+        """
         pr = tag.find_previous_sibling('div')
         try:
             if pr.string == 'Flight Departure Times':
@@ -146,7 +243,19 @@ class Airport:
             return False
           
     def arrive_date_tag(self,tag):
-        #Function to find the date of arrival for a specific flight
+        """
+        Function checking if HTML tag is a arrival date
+        Parameters
+        ----------
+        tag : tag object
+            tag to check
+        
+        Returns
+         ----------
+        bool 
+            True if tag is a arrival date
+        
+        """
         pr = tag.find_previous_sibling('div')
         try:
             if pr.string == 'Flight Arrival Times':
@@ -155,7 +264,27 @@ class Airport:
             return False
              
     def set_page(self, page, num_pages, target_page):
-        #Function to navigate to a specific page of flights for a given data segment
+        """
+        Function to set the page to given number
+        Parameters
+        ----------
+        page : page object
+            Playwright page 
+            
+        num_pages : int
+            Total number of pages
+            
+        target_page : 
+            Page to move to
+        
+        Returns
+         ----------
+        page : page object
+            Playwright page set to correct page
+        
+        blocked : bool
+            True if website blocks us, False otherwise
+        """
         #If only one page, nothing to do
         if num_pages == 1:
             return page, False
@@ -195,7 +324,38 @@ class Airport:
             return page, False
          
     def get_flight_data(self, page, ind, num_pages, tag, departure):
-        #Function to extract data from one given flight
+        """
+        Function to download data for one flight
+        Parameters
+        ----------
+        page : page object
+            Playwright page 
+            
+        ind : int
+            Page number flight is on
+            
+        num_pages : int
+            Total number of pages of flights
+            
+        tag : HTML tag
+            tag of desired flight row
+            
+        departure : bool
+            True if flight is a departure, False if arrival
+        
+        Returns
+         ----------
+        page : page object
+            Playwright page
+            
+        df : Pandas DataFrame
+            Dataframe containing flight info
+        
+        blocked : bool
+            True if website blocks us, False otherwise
+            
+        """
+        #Set page
         page, blocked = self.set_page(page, num_pages, ind)
         if blocked:
             return page, pd.DataFrame(), True
@@ -204,7 +364,7 @@ class Airport:
         href = tag.get('href')
         flight_code = ' '.join(href.split('?')[0].split('/')[-2:])
         
-        time.sleep(0.1 + random.expovariate(self.mean_delay))
+        time.sleep(random.expovariate(self.mean_delay))
         try:
             #Gets scheduled times in case flight date now out of range
             l = tag.get_text().split(':')
@@ -242,7 +402,6 @@ class Airport:
                 year = url[-4].split('=')[-1]
                 dts = datetime.datetime(int(year), int(month), int(date), int(t[0]), int(t[1]))
                 df = pd.DataFrame([{'Flight Code':flight_code,'DateTime':dts.strftime("%Y-%m-%d %H:%M"), 'Time Zone':None,  'Increment':inc, 'Other Airport Code':other_airport, 'Href':href}])
-                #print(df)
                 return page, df, False
             except:
                 print('Could not use expected values')
@@ -290,7 +449,35 @@ class Airport:
         
         
     def get_data(self, departure, airport, year, month, day, hour):
-        #Function to manage the web session for one segment of data
+        """
+        Main function to use Playwright to download one timeslot of flight data
+        Parameters
+        ----------
+        departure : bool
+            True if flight is a departure, False otherwise
+            
+        airport : str
+            Three digit airport code
+            
+        year : int
+            year of time slot
+            
+        month : int
+            month of time slot
+            
+        day : int
+            day of time slot
+        
+        hour : int
+            0,1,2,3 for the four timeslots from the website
+        
+        Returns
+         ----------
+        df : Pandas DataFrame
+            Dataframe containing flight info
+        
+            
+        """
         link = self.gen_link(departure, airport, year, month, day, hour)
         blocked = False
         
@@ -409,9 +596,6 @@ if __name__ == '__main__':
     conn.execute('CREATE TABLE IF NOT EXISTS flights (airport TEXT NOT NULL, flight_code TEXT, flight_datetime TEXT, timezone TEXT, increment INT, other_airport TEXT) STRICT')
     t=0
     for A in all_airports:
-        A.partial_params = {}
-        A.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code', 'Href'])
-
         if t > 2:
             break
         name = A.name.lower().replace(' ','_')
@@ -438,8 +622,8 @@ if __name__ == '__main__':
         n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
         if n > 0:
             print(f'{n} time segments still to download')
-            #t += 1
-            time.sleep(random.expovariate(1))
+            t += 1
+            #time.sleep(random.expovariate(1))
         else:
             print(f'{A.name} has all available data downloaded')
 

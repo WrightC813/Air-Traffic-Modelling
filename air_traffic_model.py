@@ -9,13 +9,14 @@ import sqlite3
 import pandas as pd
 import numpy as np
 import random
+import bisect
 from CTMC_Model import *
 import matplotlib.pyplot as plt
 
 #Start and end times to consider data between
 start_time = '2026-04-26 00:00'
 start_time_pd = pd.Timestamp(start_time)
-end_time = '2026-05-15 00:00'
+end_time = '2026-05-26 00:00'
 
 # %% Loading data to pandas dataframes for training
 conn = sqlite3.connect('airport_data.db', isolation_level=None)
@@ -74,87 +75,159 @@ for df in individual_df_cts  + individual_df_disc:
     #df = pd.concat([df,pd.DataFrame({'Flight Code':None, 'Datetime': start_time_pd, 'Increment':0, 'Number of Planes':df.iloc[0]['Number of Planes'] - df.iloc[0]['Increment'], 'Minutes From Start': 0},index=[-1])])#
     #Subtracting min number of planes to get a state in {0,1,...,S-1}
     df['State'] = df['Number of Planes'] - min(df['Number of Planes'])
-
-
+    
 
 # %% Fitting CTMC for cts version of dataset
-n_iter = 50
+n_iter = 100
 
-for i, df in enumerate(individual_df_cts):
-    
+for i, df in enumerate(individual_df_cts[:1]):
     name = conn.execute('SELECT name FROM airports WHERE code=?',[codes[i]]).fetchone()[0]
     states = df['State'].values
     times = df['Minutes From Start'].values
+    S = max(states) + 1
+    #Default model structure - all 1 off diagonals have own parameter, all others 0
+    structure = np.zeros((S,S))
+    for i in range(S-1):
+        structure[i,i+1] = 2*i + 1
+        structure[i+1,i] = 2*i + 2
     
     print(name)
     
-    # Following uses annealing method to choose xi
     
-    # xi = [360,1080]
-    # ctmc_MLE = CTMC()
-    # ctmc_MLE.fit(states,times,xi,a_optim='MLE',xi_optim='anneal',N=n_iter)
-    # print(f'Final xi values: {ctmc_MLE.xi}')
+    # Comparing the optimistion methods for a and xi
     
-
-    # fig, axs = plt.subplots(1,1)
-    # axs.set_title(name + ' - MLE + Anneal')
+    a_method = ['MLE', 'PM']
+    xi_method = ['anneal', 'random']
     
-    # for j in range(2):
-    #     s,t = ctmc_MLE.generate_path(states[0],0,times[-1])
-    #     axs.step(t,s,where='post', label=f'Sample path {j+1}')
-    # axs.step(times,states,where='post',color='green', label='Observed path')
-    # axs.legend()
-    # axs.plot()
-    
-    #Following uses random search to find x, comparing different numbers of partitions
-    
-    fig_1, axs_1 = plt.subplots(2,2,sharex=True,sharey=True,figsize=(10,10))
-    fig_1.suptitle(name + ' - Partition Point Error Estimates',fontsize=16, fontweight='bold')
-    
-    fig_2, axs_2 = plt.subplots(4,1,sharex=True,sharey=True, figsize=(10,18))
-    fig_2.suptitle(name + ' - MLE + Random Search',fontsize=16, fontweight='bold')
-    
-    ctmc_2 = CTMC()
-    err_baseline = ctmc_2.fit(states,times,[0],a_optim='MLE',xi_optim='fixed')
-    
-    for K in range(2,6):
-        ctmc_2 = CTMC()
-        xi_list = []
-        err_list = []
-        for i in range(n_iter):
-            xi = np.sort(random.sample(list(range(0,1440)),k=K))
-            print(f'{i+1} - xi values: {xi}')
-            err = ctmc_2.fit(states,times,xi,a_optim='MLE',xi_optim='fixed')
-            xi_list.append(xi)
-            err_list.append(err)
+    for a_m in a_method:
+        for xi_m in xi_method:
+            print(f'a_optim={a_m}, xi_optim={xi_m}')
+            xi = [360,1080]
+            Mod = CTMC()
+            err, log_l = Mod.fit(states,times,xi,a_m,xi_m,N=n_iter, coeff_struct=structure)
+            fig, axs = plt.subplots(figsize=(20,5))
+            axs.set_title(f'{name} - a_optim={a_m}, xi_optim={xi_m}')
+            for j in range(2):
+                s,t = Mod.generate_path(states[0],0,times[-1])
+                axs.step(t,s,where='post', label=f'Sample path {j+1}')
+            axs.step(times,states,where='post',color='green', label='Observed path')
+            axs.legend()
+            print(f'Chosen xi - {Mod.xi}')
+            print(f'log l= {log_l}')
+            print(f'L1 error = {err[0]} +- {err[1]}')
             
-        #Plotting errors of each xi choice
-        axs_1[K//4,K%2].set_title(f'K = {K}')
+            
+# %% Testing predictions from solving transition semi-group equation
+df = individual_df_cts[0]
+states = df['State'].values
+times = df['Minutes From Start'].values
+S = max(states) + 1
+#Default model structure - all 1 off diagonals have own parameter, all others 0
+structure = np.zeros((S,S))
+for i in range(S-1):
+    structure[i,i+1] = 2*i + 1
+    structure[i+1,i] = 2*i + 2
+
+xi = [360,1080]
+Mod = CTMC()
+err, log_l = Mod.fit(states,times,xi,'MLE','anneal',N=100, coeff_struct=structure)
+
+ts = sorted(random.sample(range(0,int(times[-1])),k=5))
+P_0 = np.zeros(S)
+P_0[states[0]] = 1
+for t in ts:
+    eq_times, dist = Mod.solve_forward_eq(0, t, P_0)
+    true_state = states[bisect.bisect(times,t)]
+    colors = ['blue' for i in range(S)]
+    colors[true_state] = 'red'
+    fig, ax = plt.subplots()
+    
+    ax.set_title(f'Predicted Distribution at Time {t}')
+    ax.bar(range(S), dist[:,-1], color=colors)
+
+
+    #Checking stability by looking at total probability
+    fig2, ax2 = plt.subplots()
+    ax2.plot(eq_times,dist.T, label=[f'State {i}' for i in range(S)])
+    ax2.legend(columns=2)
+
+    
+    
+# %% Investigating error for different partition choices
+
+# n_iter = 10
+
+# for i, df in enumerate(individual_df_cts[:1]):
+#     name = conn.execute('SELECT name FROM airports WHERE code=?',[codes[i]]).fetchone()[0]
+#     states = df['State'].values
+#     times = df['Minutes From Start'].values
+#     S = max(states) + 1
+#     #Default model structure - all 1 off diagonals have own parameter, all others 0
+#     structure = np.zeros((S,S))
+#     for i in range(S-1):
+#         structure[i,i+1] = 2*i + 1
+#         structure[i+1,i] = 2*i + 2
+    
+#     print(name)
+#     #Following uses random search to find x, comparing different numbers of partitions
+    
+#     fig_1, axs_1 = plt.subplots(2,2,sharex=True,sharey=True,figsize=(10,10))
+#     fig_1.suptitle(name + ' - Partition Point L1 Error Estimates',fontsize=16, fontweight='bold')
+    
+#     fig_2, axs_2 = plt.subplots(4,1,sharex=True,sharey=True, figsize=(10,18))
+#     fig_2.suptitle(name + ' - MLE + Random Search',fontsize=16, fontweight='bold')
+    
+#     fig_3, axs_3 = plt.subplots(2,2,sharex=True,sharey=True,figsize=(10,10))
+#     fig_3.suptitle(name + ' - Partition Point Log Likelihood Estimates',fontsize=16, fontweight='bold')
+    
+#     ctmc_2 = CTMC()
+#     err_baseline = ctmc_2.fit(states,times,[0],a_optim='MLE',xi_optim='fixed')
+#     log_l_baseline = ctmc_2.log_l(states, times, ctmc_2.a, ctmc_2.xi)
+    
+#     for K in range(2,6):
+#         ctmc_2 = CTMC()
+#         xi_list = []
+#         err_list = []
+#         log_l_list = []
+#         for i in range(n_iter):
+#             xi = np.sort(random.sample(list(range(0,1440)),k=K))
+#             print(f'{i+1} - xi values: {xi}')
+#             err = ctmc_2.fit(states,times,xi,a_optim='MLE',xi_optim='fixed',coeff_struct=structure)
+#             xi_list.append(xi)
+#             err_list.append(err)
+#             log_l_list.append(ctmc_2.log_l(states,times,ctmc_2.a,ctmc_2.xi))
+            
+#         #Plotting errors of each xi choice
+#         axs_1[K//4,K%2].set_title(f'K = {K}')
+#         axs_3[K//4,K%2].set_title(f'K = {K}')
         
-        x = np.array(xi_list)
-        e = np.array(err_list)
-        e_v = e[:,0]
-        e_sd = e[:,1]
-        axs_1[K//4,K%2].plot(x.T, np.vstack([e_v for i in range(K)]), color='blue', alpha=0.5)
-        err_v_2 = np.ravel([[e[0] for i in range(K)] for e in err_list])
-        err_sd_2 = np.ravel([[e[1] for i in range(K)] for e in err_list])
-        axs_1[K//4,K%2].errorbar(np.ravel(x), err_v_2, yerr=err_sd_2, linestyle='None', marker='x')
-        axs_1[K//4,K%2].hlines(y=err_baseline[0],xmin=0,xmax=1440,color='green')
-        axs_1[K//4,K%2].hlines(y=[err_baseline[0] - err_baseline[1],err_baseline[0] + err_baseline[1]],xmin=0,xmax=1440,color='red')
-            
-        #Plotting observed vs simulated data
-        axs_2[K-2].set_title(f'K = {K}')
-        best_ind = np.argmin(err_list,axis=0)[0]
-        xi_best = xi_list[best_ind]
-        err_best = err_list[best_ind]
-        print(f'Best xi values: {xi_best}, error: {err_best[0]} +- {err_best[1]}')
-        ctmc_2.fit(states,times,xi_best,a_optim='MLE',xi_optim='fixed')
-        for j in range(2):
-            s,t = ctmc_2.generate_path(states[0],0,times[-1])
-            axs_2[K-2].step(t,s,where='post', label=f'Sample path {j+1}', alpha = 0.5)
-        axs_2[K-2].step(times,states,where='post',color='green', label='Observed path', alpha = 1)
-        axs_2[K-2].legend()
-    fig_1.show()
-    fig_2.show()
-
+#         x = np.array(xi_list)
+#         e = np.array(err_list)
+#         e_v = e[:,0]
+#         e_sd = e[:,1]
+#         axs_1[K//4,K%2].plot(x.T, np.vstack([e_v for i in range(K)]), color='blue', alpha=0.5)
+#         err_v_2 = np.ravel([[e[0] for i in range(K)] for e in err_list])
+#         err_sd_2 = np.ravel([[e[1] for i in range(K)] for e in err_list])
+#         axs_1[K//4,K%2].errorbar(np.ravel(x), err_v_2, yerr=err_sd_2, linestyle='None', marker='x')
+#         axs_1[K//4,K%2].hlines(y=err_baseline[0],xmin=0,xmax=1440,color='green')
+#         axs_1[K//4,K%2].hlines(y=[err_baseline[0] - err_baseline[1],err_baseline[0] + err_baseline[1]],xmin=0,xmax=1440,color='red')
+        
+#         axs_3[K//4,K%2].plot(x.T, np.vstack([log_l_list for i in range(K)]), color='blue', alpha=0.5)
+#         axs_3[K//4,K%2].hlines(y=log_l_baseline,xmin=0,xmax=1440,color='green')
+#         axs_3[K//4,K%2].scatter(np.ravel(x),np.ravel([[l for i in range(K)] for l in log_l_list]), marker='x')
+        
+#         #Plotting observed vs simulated data
+#         axs_2[K-2].set_title(f'K = {K}')
+#         best_ind = np.argmin(err_list,axis=0)[0]
+#         xi_best = xi_list[best_ind]
+#         err_best = err_list[best_ind]
+#         print(f'Best xi values: {xi_best}, error: {err_best[0]} +- {err_best[1]}')
+#         ctmc_2.fit(states,times,xi_best,a_optim='MLE',xi_optim='fixed')
+#         for j in range(2):
+#             s,t = ctmc_2.generate_path(states[0],0,times[-1])
+#             axs_2[K-2].step(t,s,where='post', label=f'Sample path {j+1}', alpha = 0.5)
+#         axs_2[K-2].step(times,states,where='post',color='green', label='Observed path', alpha = 1)
+#         axs_2[K-2].legend()
+    
+    
 conn.close()

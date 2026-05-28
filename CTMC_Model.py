@@ -8,36 +8,41 @@ Created on Fri Apr  3 19:42:11 2026
 
 import random
 import numpy as np
+import scipy as sp
+import bisect
 
 class CTMC:
     def __init__(self):
-        pass
+        self.S = 0
+        self.K = 0
+        self.xi = []
+        self.a = np.ones((1,1,1))
+        self.states = []
+        self.times = []
+        self.coeff_struct = None
     
-    def N_val(self,states,times,xi):
+    def N_val(self):
         #Function compuiting number of observed jumps between each pair of states and in each time window
 
-        S = max(states) + 1
-        K = len(xi)
-        k = self.k_values(times,xi)
-        num = np.zeros((S,S,K))
-        for i in range(1,len(states)):
-            num[states[i-1],states[i],k[i]] += 1.0
+        k = self.k_values(self.times)
+        num = np.zeros((self.S,self.S,self.K))
+        for i in range(1,len(self.states)):
+            num[self.states[i-1],self.states[i],k[i]] += 1.0
             
         return num
     
     
-    def D_val(self,states,times,xi):
+    def D_val(self):
         #Function computing total time spent in each state for each time window
-        S = max(states) + 1
-        K = len(xi)
-        den = np.zeros((S,S,K))
-        for i in range(1,len(states)):
-            den[states[i-1],:,:] += np.outer(np.ones(S),self.time_in_segments(times[i-1], times[i], xi))
+
+        den = np.zeros((self.S,self.S,self.K))
+        for i in range(1,len(self.states)):
+            den[self.states[i-1],:,:] += np.outer(np.ones(self.S),self.time_in_segments(self.times[i-1], self.times[i]))
             
         return den
     
     
-    def k_values(self,times,xi):
+    def k_values(self,times):
         """
         Function to find which basis function interval times are in
         Parameters
@@ -55,15 +60,13 @@ class CTMC:
             sequence of which time interval each jump time lies in
         """
         k_indices = [0 for i in range(len(times))]
-        extended_xi = [xi[-1] - 1440] + list(xi) + [xi[0] + 1440]
         for i in range(len(times)):
-            less = [(times[i] % 1440 < x) for x in extended_xi]
-            k_indices[i] = (less.index(True) - 2) % len(xi)
+            k_indices[i] = (bisect.bisect(self.xi,times[i] % 1440) - 1) % self.K
             
         return k_indices
     
     
-    def time_in_segments(self,T_0,T_1,xi):
+    def time_in_segments(self,T_0,T_1):
         """
         Function computing how much time between T_0 and T_1 spent in each segment
         Parameters
@@ -73,9 +76,6 @@ class CTMC:
         
         T_1 : float
             end time
-            
-        xi : np.array with shape (K)
-            array of partition times for piecewise constant basis functions
         
 
         Returns
@@ -83,17 +83,16 @@ class CTMC:
         seg_times : np.array with shape (K)
             array of times spent in each segment
         """
-        K = len(xi)
-        seg_times = np.zeros(K)
+        seg_times = np.zeros(self.K)
         t = T_0
         while t < T_1:
-            current_k = self.k_values([t], xi)[0]
-            if current_k == K-1:
-                new_t = t + (xi[0] - (t%1440))
-                if (t%1440) > xi[0]:
+            current_k = self.k_values([t])[0]
+            if current_k == self.K-1:
+                new_t = t + (self.xi[0] - (t%1440))
+                if (t%1440) > self.xi[0]:
                     new_t += 1440
             else:
-                new_t = t + (xi[current_k + 1] - (t%1440))
+                new_t = t + (self.xi[current_k + 1] - (t%1440))
             time = min([new_t - t,T_1 - t])
             seg_times[current_k] += time
             if new_t <= t:
@@ -103,23 +102,9 @@ class CTMC:
         return seg_times
     
     
-    def log_l(self,states,times,a,xi):
+    def log_l(self):
         """
         Function to compute the log likelihood of the model
-        Parameters
-        ----------
-        states : List
-            Sequence of observed states, assumed from {0,1,..S-1}
-            
-        times : List
-            Sequence of observed jump times (in minutes from initial time 0)
-            
-        a : np array with shape (S,S,K)
-            array of coeffients for Q matrix of model, S = #states, K = #basis functions
-            
-        xi : np.array with shape (K)
-            array of partition times for piecewise constant basis functions
-        
 
         Returns
         -------
@@ -127,19 +112,21 @@ class CTMC:
             Log likelihood of the model
 
         """
-        num = self.N_val(states, times, xi)
-        den = self.D_val(states, times, xi)
+        num = self.N_val()
+        den = self.D_val()
         #eliminating negative diagonal terms
         num[num < 0] = 0
+        a1 = self.a.copy()
+        a1[num==0] = 1
         
-        term_1 = np.multiply(num,np.log(a))
+        term_1 = np.multiply(num,np.log(a1))
         #Dealing with special case where no jumps are observed
         term_1[num == 0] = 0
-        term_2 = np.multiply(a,den)
+        term_2 = np.multiply(self.a,den)
         return np.sum(term_1 - term_2)
     
     
-    def a_MLE(self,states,times,xi):
+    def a_MLE(self):
         """
         Function to find the MLE estimator for the coefficients a, given the observations and xi
         Parameters
@@ -149,31 +136,33 @@ class CTMC:
             
         times : List
             Sequence of observed jump times (in minutes from initial time 0)
-            
-        xi : np.array with shape (K)
-            array of partition times for piecewise constant basis functions
-        
-
-        Returns
-        -------
-        a : np array with shape (S,S,K)
-            array of coeffients for Q matrix of model, S = #states, K = #basis functions
         """
-        S = max(states) + 1
-        K = len(xi)
-        num = self.N_val(states, times, xi)
-        den = self.D_val(states, times, xi)
-        
-        #In case den is zero, we set the corresponding a coefficient to 0
+
+        num = self.N_val()
+        den = self.D_val()
+        #If applicable, create pooled estimates using coeff_struct array
+        if np.any(self.coeff_struct):
+            vs = np.unique(self.coeff_struct)
+            for v in vs:
+                inds = np.where(self.coeff_struct==v)
+                if v == 0:
+                    num[inds[0],inds[1],:] = 0
+                else:
+                    num[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(num[inds[0],inds[1],:],axis=(0)))
+                    den[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(den[inds[0],inds[1],:],axis=(0)))
         a = np.divide(num,den)
+        #In case den is zero, we set the corresponding a coefficient to 0  
         a[den == 0] = 0
-        for i in range(S):
-            for k in range(K):
+        #Setting diagonal entry, which is determined by rest of the parameters
+        for i in range(self.S):
+            for k in range(self.K):
                 a[i,i,k] = -np.sum(a[i,:,k])
-        return a
+                
+        self.a = a
+        return None
     
     
-    def a_PM(self,states,times,xi):
+    def a_PM(self):
         """
         Function to find the PM (posterior mean) estimator for the coefficients a, given the observations and xi.
         Flat Baysian prior used, yielding gamma posterior, effect is adding one pseudo-count to each jump in each time interval.
@@ -185,29 +174,30 @@ class CTMC:
             
         times : List
             Sequence of observed jump times (in minutes from initial time 0)
-            
-        xi : np.array with shape (K)
-            array of partition times for piecewise constant basis functions
-        
-
-        Returns
-        -------
-        a : np array with shape (S,S,K)
-            array of coeffients for Q matrix of model, S = #states, K = #basis functions
         """
-        S = max(states) + 1
-        K = len(xi)
-        num = self.N_val(states, times, xi)
-        num[:,:,:] += 1
-        den = self.D_val(states, times, xi)
+        num = self.N_val()
+        den = self.D_val()
+        
+        if np.any(self.coeff_struct):
+            vs = np.unique(self.coeff_struct)
+            for v in vs:
+                inds = np.where(self.coeff_struct==v)
+                if v == 0:
+                    num[inds] = 0
+                else:
+                    num[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(num[inds[0],inds[1],:],axis=(0))) + np.ones((len(inds[0]),self.K))
+                    den[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(den[inds[0],inds[1],:],axis=(0)))
+        else:
+            num[:,:,:] += 1
             
-        #In case den is zero, posterior is improper. We default a to 0
         a = np.divide(num,den)
+        #In case den is zero, posterior is improper. We default a to 0
         a[den == 0] = 0
-        for i in range(S):
-            for k in range(K):
+        for i in range(self.S):
+            for k in range(self.K):
                 a[i,i,k] = -np.sum(a[i,:,k])
-        return a
+                
+        self.a = a
     
     
     def xi_weights(self,m,M,c,al):
@@ -226,54 +216,37 @@ class CTMC:
         return 10**((2.7*i/N) - 1.7)
     
     
-    def xi_update(self,states,times,a,xi_old,sample=30,al=1):
+    def xi_update(self,sample=30,al=1):
         """
         Function to update xi, given the previous xi, observations and a
         Parameters
         ----------
-        states : List
-            Sequence of observed states, assumed from {0,1,..S-1}
-            
-        times : List
-            Sequence of observed jump times (in minutes from initial time 0)
-            
-        a : np array with shape (S,S,K)
-            array of coeffients for Q matrix of model, S = #states, K = #basis functions
-            
-        xi_old : np.array with shape (K)
-            array of partition times for piecewise constant basis functions
-            
         sample : int 
             number of sampled times to maximise over, default=30
+            
+        al : float
+            parameter dictating how much the value is encouraged to move, default=1
         
-        
-        Returns
-        -------
-        xi_new : np.array with shape (K)
-            array of partition times for piecewise constant basis functions
+
         
         """
-        K = a.shape[2]
-        xi_new = xi_old.copy()
-        ind = random.randint(0,K-1)
-        extended_xi = [xi_old[-1] - 1440] + list(xi_old) + [xi_old[0] + 1440]
+        ind = random.randint(0,self.K-1)
+        extended_xi = [self.xi[-1] - 1440] + list(self.xi) + [self.xi[0] + 1440]
         low = max(extended_xi[ind],0)
         high = min(extended_xi[ind + 2],1439)
         all_times = list(range(low,high+1))
-        weights = self.xi_weights(low,high,xi_old[ind],al)
+        weights = self.xi_weights(low,high,self.xi[ind],al)
         test_times = random.choices(all_times,weights=weights,k=min(sample,len(all_times)))
-        test_times.append(xi_old[ind])
+        test_times.append(self.xi[ind])
         test_times = list(np.unique(test_times))
         liks = -np.inf*np.ones(len(test_times))
         for i, t in enumerate(test_times):
-            xi = xi_old
-            xi[ind] = t
-            liks[i] = self.log_l(states,times,a,xi)
-        xi_new[ind] = test_times[np.argmax(liks)]
-        return xi_new
+            self.xi[ind] = t
+            liks[i] = self.log_l()
+        self.xi[ind] = test_times[np.argmax(liks)]
     
     
-    def fit(self,states,times,xi,a_optim='MLE',xi_optim='anneal',N=50):
+    def fit(self,states,times,xi,a_optim='MLE',xi_optim='anneal',N=50,coeff_struct=None):
         """
         Function to fit CTMC parameters to observed states and times
         Parameters
@@ -289,10 +262,12 @@ class CTMC:
             
         a_optim : 'MLE' or 'PM' 
             Which estimator to use for the parameters a
-        xi_optim : 'anneal', fixed
+            
+        xi_optim : 'anneal', 'fixed', 'random'
             Which algorithm to use for xi optimisation
+            
         N : int
-            Number of iterations to perform
+            Number of iterations to perform for anneal optimisation
         
         """
         if a_optim == 'MLE':
@@ -302,39 +277,60 @@ class CTMC:
         else:
             print('Error: invalid value for a_optim')
             return None
+    
+        #Set object parameters
+        #observed states and times
         self.states = states
         self.times = times
+        #time partition points
         self.xi = xi
+        #number of states and time partitions
         self.S = max(states) + 1
         self.K = len(xi)
-        self.a = a_step(self.states,self.times,self.xi)
+        #coefficient structure, if any (i.e. which are set to zero or to be equal)
+        self.coeff_struct = coeff_struct
+        
+        a_step()
         
         #fixed xi_optim means we treat xi as fixed, not to be optimised
         if xi_optim == 'fixed':
-            #print('Fitted with given xi')
-            #print(f'log l: {self.log_l(self.states,self.times,self.a,self.xi)}')
-            err = self.model_error()
-            #print(f'expected L1 error: {err[0]} +- {err[1]}')
+            pass
+            
         
         #anneal xi_optim uses stochastic search with simulated annealing idea to slowly reduce 
         #mobility of the xi
         elif xi_optim == 'anneal':
             for i in range(N):
-                self.xi = self.xi_update(self.states,self.times,self.a,self.xi,al=self.xi_mobility(i, N))
-                self.a = a_step(self.states, self.times, self.xi)
-                err = self.model_error()
-                print(f'Iteration {i+1}: log l: {self.log_l(self.states,self.times,self.a,self.xi)}, expected L1 error: {err[0]} +- {err[1]}')
+                self.xi_update(al=self.xi_mobility(i, N))
+                a_step()
+                #err = self.model_error()
+                print(f'Iteration {i+1}: log l: {self.log_l()}')#, expected L1 error: {err[0]} +- {err[1]}')
         
+        #uses brute force random search and selects best xi
+        elif xi_optim == 'random':
+            #Include given xi, allows for keeping track of best so far over multiple calls of fit
+            xi_list = [self.xi]
+            #err_list = [self.model_error()]
+            log_l_list = [self.log_l()]
+            for i in range(N):
+                self.xi = np.sort(random.sample(list(range(0,1440)),k=self.K))
+                a_step()
+                xi_list.append(self.xi)
+                #err_list.append(self.model_error())
+                log_l_list.append(self.log_l())
+                print(f'Iteration {i+1}: log l: {self.log_l()}')
+            self.xi = xi_list[np.argmax(log_l_list)]
+            a_step()
         else:
             print('Error: invalid value for xi_optim')
             return None
         
         
-        return err
+        return self.model_error(), self.log_l()
         
     def q(self,i,j,t):
         #Function computing intensity function q_ij at time t, a list of times
-        k_vals = self.k_values(t, self.xi)
+        k_vals = self.k_values(t)
         return self.a[i,j,k_vals]
     
     def integrate_step(self,values,partition):
@@ -435,3 +431,33 @@ class CTMC:
             values = np.abs(self.states[mask_data] - s[mask_sim])
             errors.append(self.integrate_step(values, partitions)/partitions[-1])
         return np.mean(errors), np.std(errors,ddof=1)/np.sqrt(N)
+    
+    
+    def solve_forward_eq(self,t_0,t_1,P_0):
+        #Solves backwards equation for transition semi-group using implicit Euler scheme
+        #Array of all xi times plus start and end time
+        discon = sorted([t_0,t_1] + [1440*n + x for x in self.xi for n in range(t_0//1440,t_1//1440 + 1)])
+        discon = discon[bisect.bisect(discon,t_0) - 1:bisect.bisect_left(discon,t_1)+1]
+        #times where we estimate solution
+        sol_times = [t_0]
+        P = np.array(P_0).reshape((self.S,1))
+        #Loop over each time interval where Q is constant
+        for i in range(len(discon) - 1):
+            #time step
+            h = (discon[i+1] - discon[i])/(np.ceil(discon[i+1] - discon[i])*5)
+            steps = int((discon[i+1] - discon[i])/h)
+            sol_times += [discon[i] + (n+1)*h for n in range(steps)]
+            k_val = self.k_values([discon[i]])[0]
+            M = np.identity(self.S) - h*self.a[:,:,k_val]
+            #Using QR decomposition as we solve system many times
+            Q, R = np.linalg.qr(M.T)
+            for k in range(steps):
+                P_step = sp.linalg.solve_triangular(R,Q.T @ P[:,-1]).reshape((self.S,1))
+                P = np.hstack([P,P_step])
+                
+        return sol_times, P
+            
+            
+            
+            
+        
