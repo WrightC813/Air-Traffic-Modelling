@@ -16,7 +16,7 @@ CTMC\_Model.py contains class to handle the CTMC model. This class takes care of
 
 Still to do:
 
-* Cleaning up of code
-* Allow model to have fixed parameter structure, i.e. set certain parameters to zero or to be equal
 * Implement multiple airport model to take advantage of the information of inter-network flights
+* Use likelihood ratio tests to investigate different models coming from different numbers of free parameters
+* Use seperate validation set and L1 error to choose model structures, and compare with above statistical approach
 
