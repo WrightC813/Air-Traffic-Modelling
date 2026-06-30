@@ -362,7 +362,7 @@ class CTMC:
         int_q = 0
         chosen = False
         #to replace by some max number of iterations
-        for i in range(len(self.xi)*3):
+        for i in range(len(self.xi)*4):
             q = self.q(state,state,[partitions[-1]])[0]
             n = int(partitions[-1] // 1440)
             next_parts = sorted([float(n*1440 + x) for x in self.xi] + [float((n+1)*1440 + x) for x in self.xi])
@@ -379,7 +379,7 @@ class CTMC:
                 break
             
         if not chosen:
-            print('Jump time exceeds 3 days, set to inf')
+            print('Jump time exceeds 4 days, set to inf')
             return np.inf
         
         u = random.random()
@@ -434,9 +434,9 @@ class CTMC:
     
     
     def solve_forward_eq(self,t_0,t_1,P_0):
-        #Solves backwards equation for transition semi-group using implicit Euler scheme
+        #Solves forwards equation for transition semi-group using implicit Euler scheme
         #Array of all xi times plus start and end time
-        discon = sorted([t_0,t_1] + [1440*n + x for x in self.xi for n in range(t_0//1440,t_1//1440 + 1)])
+        discon = sorted([t_0,t_1] + [1440*n + x for x in self.xi for n in range(int(t_0//1440),int(t_1//1440) + 1)])
         discon = discon[bisect.bisect(discon,t_0) - 1:bisect.bisect_left(discon,t_1)+1]
         #times where we estimate solution
         sol_times = [t_0]
