@@ -7,3 +7,7 @@ CTMC_Experiments.py
 airport_data_(backup_pre_database).pickle
 Figures
 __pycache__/
+air_traffic_model.py
+.ipynb_checkpoints/
+Mathematical_Model.log
+Mathematical_Model.synctex.gz

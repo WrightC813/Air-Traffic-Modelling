@@ -5,16 +5,15 @@ Created on Thu Mar 19 23:51:22 2026
 @author: thecd
 """
 
-import bs4
-from playwright.sync_api import sync_playwright
-from playwright.sync_api import expect
-import pandas as pd
 import random
 import time
 import datetime
 import pickle
-import sqlite3
-    
+import sqlite3   
+import bs4
+from playwright.sync_api import sync_playwright
+from playwright.sync_api import expect
+import pandas as pd
 
 class Airport:
     """
@@ -31,9 +30,9 @@ class Airport:
     def __init__(self, code, name):
         self.code = code
         self.name = name
-        
         #df stores all arrival and departure information
-        self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code'])
+        self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone',
+                                             'Increment', 'Other Airport Code'])
         #df storing time segments of data, with download status
         self.segments_df = pd.DataFrame(columns=['Date', 'Departure', 'Time Slot', 'Downloaded'])
         #constant for time delays
@@ -42,7 +41,8 @@ class Airport:
         self.date_dict = {'Jan':1, 'Feb':2, 'Mar':3, 'Apr':4, 'May':5, 'Jun':6,
                      'Jul':7, 'Aug':8, 'Sep':9, 'Oct':10, 'Nov':11, 'Dec':12}
         #df to store partial downloads
-        self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code', 'Href'])
+        self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone',
+                                                'Increment', 'Other Airport Code', 'Href'])
         #parameters of partially downloaded data
         self.partial_params = {}
         
@@ -59,7 +59,8 @@ class Airport:
         for d in dates:
             for dept in (True, False):
                 for i in range(4):
-                    df_t = pd.concat([df_t, pd.DataFrame([{'Date':d, 'Departure':dept, 'Time Slot':i, 'Downloaded':False}])],ignore_index=True)
+                    df_t = pd.concat([df_t, pd.DataFrame([{'Date':d, 'Departure':dept, 'Time Slot':i, 'Downloaded':False}])],
+                                      ignore_index=True)
                     
         #Delete duplicates and set data types
         self.segments_df = pd.concat([self.segments_df,df_t], ignore_index=True).drop_duplicates(subset=['Date', 'Departure', 'Time Slot'])
@@ -116,6 +117,7 @@ class Airport:
         #If sucessful and not blocked, store data and mark this segment as downloaded
         self.data_df = (pd.concat([self.data_df,df_t], ignore_index=True).sort_values('DateTime')).drop_duplicates(subset=['Flight Code', 'DateTime'])
         self.segments_df.loc[self.segments_df.index[ind],'Downloaded'] = True
+        return None
         
         
     def gen_link(self, departure, airport, year, month, day, hour):
@@ -176,6 +178,7 @@ class Airport:
             
             except:
                 return False
+        return False
                     
     def table_tag(self,tag):
         """
@@ -194,11 +197,13 @@ class Airport:
         if tag.name == "a":
             try:
                 classes = tag.get("class")
-                has_hyp = tag.get("href") != None
+                has_hyp = tag.get("href") is not None
                 return 'table__A' in str(classes) and has_hyp
             
             except:
                 return False
+            
+        return False
             
     def time_tag(self,tag):
         """
@@ -219,7 +224,10 @@ class Airport:
             if pr.string == 'Actual':
                 return True
         except:
-            return False
+            pass
+        
+        return False
+        
            
     def depart_date_tag(self,tag):
         """
@@ -240,7 +248,9 @@ class Airport:
             if pr.string == 'Flight Departure Times':
                 return True
         except:
-            return False
+            pass
+        
+        return False
           
     def arrive_date_tag(self,tag):
         """
@@ -261,7 +271,9 @@ class Airport:
             if pr.string == 'Flight Arrival Times':
                 return True
         except:
-            return False
+            pass
+        
+        return False
              
     def set_page(self, page, num_pages, target_page):
         """
@@ -305,7 +317,7 @@ class Airport:
             return page, False
         
         #Otherwise click through until we reach desired page
-        elif target_page < min(visible_buttons):
+        if target_page < min(visible_buttons):
             for j in range(min(visible_buttons) - target_page):
                 time.sleep(0.1 + random.expovariate(self.mean_delay))
                 page.get_by_text(f'{min(visible_buttons) - j}', exact=True).first.click()
@@ -314,14 +326,13 @@ class Airport:
             page.get_by_text(f'{target_page}', exact=True).first.click()
             return page, False
         
-        else:
-            for j in range(target_page - max(visible_buttons)):
-                time.sleep(0.1 + random.expovariate(self.mean_delay))
-                page.get_by_text(f'{max(visible_buttons) + j}', exact=True).first.click()
-                expect(page.get_by_text(f'{max(visible_buttons) + j + 1}', exact=True).first).to_be_visible()
-                
-            page.get_by_text(f'{target_page}', exact=True).first.click()
-            return page, False
+        for j in range(target_page - max(visible_buttons)):
+            time.sleep(0.1 + random.expovariate(self.mean_delay))
+            page.get_by_text(f'{max(visible_buttons) + j}', exact=True).first.click()
+            expect(page.get_by_text(f'{max(visible_buttons) + j + 1}', exact=True).first).to_be_visible()
+            
+        page.get_by_text(f'{target_page}', exact=True).first.click()
+        return page, False
          
     def get_flight_data(self, page, ind, num_pages, tag, departure):
         """
@@ -475,6 +486,9 @@ class Airport:
          ----------
         df : Pandas DataFrame
             Dataframe containing flight info
+            
+        blocked : bool
+            True if we suspect the website blocked requests
         
             
         """
@@ -505,7 +519,7 @@ class Airport:
             expect(toggle).to_be_visible()
             toggle.click()
         except:
-            return None
+            return pd.DataFrame(), True
 
 
         #find number of pages
@@ -566,15 +580,17 @@ class Airport:
             return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code']], blocked
 
         
-        if not blocked:
-            df = pd.concat([self.partial_df,df], ignore_index=True)
-            self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Href'])
-            self.partial_params = {}
-            return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code']], blocked
+        df = pd.concat([self.partial_df,df], ignore_index=True)
+        self.partial_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Href'])
+        self.partial_params = {}
+        return df[['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code']], blocked
     
     
     
     def reset_df(self):
+        """
+        Function to reset the database in advance of new downloads
+        """
         self.data_df = pd.DataFrame(columns=['Flight Code', 'DateTime', 'Time Zone', 'Increment', 'Other Airport Code'])
     
 
@@ -619,7 +635,7 @@ if __name__ == '__main__':
                 conn.execute('INSERT INTO flights VALUES (?,?,?,?,?,?)', [A.code, f[1], f[2], f[3], f[4], f[5]])
         
         #Displaying how much more availbale data for airport A
-        n = len(A.segments_df.tail(24).loc[A.segments_df["Downloaded"] == False])
+        n = len(A.segments_df.tail(24).loc[not A.segments_df["Downloaded"]])
         if n > 0:
             print(f'{n} time segments still to download')
             t += 1
@@ -632,4 +648,4 @@ if __name__ == '__main__':
         pickle.dump(all_airports, f, pickle.HIGHEST_PROTOCOL)
     conn.close()
     print('Data objects saved')
-
+    

@@ -5,13 +5,74 @@ Created on Fri Apr  3 19:42:11 2026
 @author: thecd
 """
 
-
+import bisect
 import random
 import numpy as np
 import scipy as sp
-import bisect
+
 
 class CTMC:
+    """
+    Class containing the custom continuous time markov chain model.
+    
+    Attributes
+    ----------
+    S : int
+        number of states
+    K : int
+        number of partitions in each 24h
+    xi : list
+        list containing partition points
+    a : np.array
+        array of dimension (S,S,K) containing infinitesimal generator coefficients
+    states : list
+        list of observed states
+    times : list
+        list of observed jump times
+    coeff_struct : np.array (or None)
+        if not None, describes parameter pooling structure of model
+
+    Methods
+    -------
+    N_val():
+        returns number of observed jumps of each type in each time interval
+    D_val():
+        returns total time spent in each state
+    k_values():
+        returns indices of partition intervals for list of times
+    time_in_segments():
+        returns total time in each partition segment
+    log_l():
+        returns log likelihood of model
+    a_MLE():
+        computes a parameters using MLE algorithm
+    a_PM():
+        computes a parameters using PM algorithm
+    xi_weights():
+        returns weights for selecting candidate xi under anneal algorithm
+    xi_mobility():
+        returns mobility coefficient for xi update under anneal algorithm
+    xi_update():
+        computes new xi values for anneal algorithm
+    fit():
+        fits model parameters for given input data
+    q():
+        returns infinitesimal generator values at given times
+    integrate_step():
+        computes integral of a step function
+    integrate_q():
+        computes integral of the infinitesimal generator
+    jump_time():
+        simulates and returns time until next jump
+    sample_jump():
+        simulates and returns one jump under the model
+    generate_path():
+        simulates and returns sample path under the model
+    model_error():
+        estimates and returns L1 model error
+    solve_forward_eq():
+        solves Kolmogorev forwards equations for probability semi-group
+    """
     def __init__(self):
         self.S = 0
         self.K = 0
@@ -22,8 +83,15 @@ class CTMC:
         self.coeff_struct = None
     
     def N_val(self):
-        #Function compuiting number of observed jumps between each pair of states and in each time window
+        """
+        Function compuiting number of observed jumps between each pair of 
+        states and in each time window
 
+        Returns
+        -------
+        num : np.array
+            array of jump counts for each state pair and partition interval
+        """
         k = self.k_values(self.times)
         num = np.zeros((self.S,self.S,self.K))
         for i in range(1,len(self.states)):
@@ -33,8 +101,14 @@ class CTMC:
     
     
     def D_val(self):
-        #Function computing total time spent in each state for each time window
+        """
+        Function computing total time spent in each state for each time window
 
+        Returns
+        -------
+        den : np.array
+            array of total time for each state pair and partition interval
+        """
         den = np.zeros((self.S,self.S,self.K))
         for i in range(1,len(self.states)):
             den[self.states[i-1],:,:] += np.outer(np.ones(self.S),self.time_in_segments(self.times[i-1], self.times[i]))
@@ -60,8 +134,8 @@ class CTMC:
             sequence of which time interval each jump time lies in
         """
         k_indices = [0 for i in range(len(times))]
-        for i in range(len(times)):
-            k_indices[i] = (bisect.bisect(self.xi,times[i] % 1440) - 1) % self.K
+        for i, t in enumerate(times):
+            k_indices[i] = (bisect.bisect(self.xi,t % 1440) - 1) % self.K
             
         return k_indices
     
@@ -148,8 +222,8 @@ class CTMC:
                 if v == 0:
                     num[inds[0],inds[1],:] = 0
                 else:
-                    num[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(num[inds[0],inds[1],:],axis=(0)))
-                    den[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(den[inds[0],inds[1],:],axis=(0)))
+                    num[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(num[inds[0],inds[1],:],axis=0))
+                    den[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(den[inds[0],inds[1],:],axis=0))
         a = np.divide(num,den)
         #In case den is zero, we set the corresponding a coefficient to 0  
         a[den == 0] = 0
@@ -159,7 +233,6 @@ class CTMC:
                 a[i,i,k] = -np.sum(a[i,:,k])
                 
         self.a = a
-        return None
     
     
     def a_PM(self):
@@ -185,8 +258,8 @@ class CTMC:
                 if v == 0:
                     num[inds] = 0
                 else:
-                    num[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(num[inds[0],inds[1],:],axis=(0))) + np.ones((len(inds[0]),self.K))
-                    den[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(den[inds[0],inds[1],:],axis=(0)))
+                    num[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(num[inds[0],inds[1],:],axis=0)) + np.ones((len(inds[0]),self.K))
+                    den[inds[0],inds[1],:] = np.outer(np.ones(len(inds[0])),np.sum(den[inds[0],inds[1],:],axis=0))
         else:
             num[:,:,:] += 1
             
@@ -201,7 +274,24 @@ class CTMC:
     
     
     def xi_weights(self,m,M,c,al):
-        #Function determining distribution of random search for optimal xi value
+        """
+        Function determining distribution of random search for optimal xi value
+        Parameters
+        ----------
+        m : int
+            min possible value
+        M : int
+            max possible value
+        c : int
+            current xi value
+        al : float
+            mobility parameter
+        
+        Returns
+        -------
+        weights : list
+            list of weights for choosing each possible xi value
+        """
         times = np.array(range(0,M-m+1))
         weights = np.zeros(M-m+1)
         weights[:c-m] = np.power(times[:c-m]/(c-m),al)
@@ -210,6 +300,22 @@ class CTMC:
     
     
     def xi_mobility(self,i,N):
+        """
+        Function detetermining parameter al in computing xi weights, inspired 
+        by simulated annealing so that initially xi allowed to move far from 
+        current value but over time has less mobility
+        Parameters
+        ----------
+        i : int
+            current training iteration
+        N : int
+            total number of training iterations
+        
+        Returns
+        -------
+        al : float
+            mobility parameter al
+        """
         #Function detetermining parameter al in computing xi weights, inspired by simulated annealing 
         #so that initially xi allowed to move far from current value but over time has less mobility
         #return 50*np.tanh((2.6*i)/N)
@@ -218,7 +324,7 @@ class CTMC:
     
     def xi_update(self,sample=30,al=1):
         """
-        Function to update xi, given the previous xi, observations and a
+        Function to update xi, given the previous xi, observations and a.
         Parameters
         ----------
         sample : int 
@@ -226,9 +332,6 @@ class CTMC:
             
         al : float
             parameter dictating how much the value is encouraged to move, default=1
-        
-
-        
         """
         ind = random.randint(0,self.K-1)
         extended_xi = [self.xi[-1] - 1440] + list(self.xi) + [self.xi[0] + 1440]
@@ -246,9 +349,9 @@ class CTMC:
         self.xi[ind] = test_times[np.argmax(liks)]
     
     
-    def fit(self,states,times,xi,a_optim='MLE',xi_optim='anneal',N=50,coeff_struct=None):
+    def fit(self,states,times,xi,a_optim='MLE',xi_optim='anneal',N=50,coeff_struct=None, verbose=False):
         """
-        Function to fit CTMC parameters to observed states and times
+        Function to fit CTMC parameters to observed states and times.
         Parameters
         ----------
         states : List
@@ -268,6 +371,9 @@ class CTMC:
             
         N : int
             Number of iterations to perform for anneal optimisation
+
+        verbose : bool
+            If True, prints update for every iteration of the algorithm
         
         """
         if a_optim == 'MLE':
@@ -304,7 +410,8 @@ class CTMC:
                 self.xi_update(al=self.xi_mobility(i, N))
                 a_step()
                 #err = self.model_error()
-                print(f'Iteration {i+1}: log l: {self.log_l()}')#, expected L1 error: {err[0]} +- {err[1]}')
+                if verbose:
+                    print(f'Iteration {i+1}: log l: {self.log_l()}')#, expected L1 error: {err[0]} +- {err[1]}')
         
         #uses brute force random search and selects best xi
         elif xi_optim == 'random':
@@ -318,7 +425,8 @@ class CTMC:
                 xi_list.append(self.xi)
                 #err_list.append(self.model_error())
                 log_l_list.append(self.log_l())
-                print(f'Iteration {i+1}: log l: {self.log_l()}')
+                if verbose:
+                    print(f'Iteration {i+1}: log l: {self.log_l()}')
             self.xi = xi_list[np.argmax(log_l_list)]
             a_step()
         else:
@@ -329,20 +437,65 @@ class CTMC:
         return self.model_error(), self.log_l()
         
     def q(self,i,j,t):
-        #Function computing intensity function q_ij at time t, a list of times
+        """
+        Function computing intensity function q_ij at time t, a list of times.
+        Parameters
+        ----------
+        i : int
+            row index
+        j : int
+            column index
+        t : list
+            times to evaluate q_ij
+        
+        Returns
+        -------
+        q : np.array
+            array of shape t of values of q_ij
+        """
         k_vals = self.k_values(t)
         return self.a[i,j,k_vals]
     
     def integrate_step(self,values,partition):
-        #Function computing the integral of a (left cts) step function
-        #integral range determined by partition points
-        #values is values at each partition point
+        """
+        Function computing the integral of a (left cts) step function, with
+        bounds of integration determined by first and last partition points.
+        Parameters
+        ----------
+        values : list
+            list of function values at each partition point
+        partition : list
+            list of partition points
+        
+        Returns
+        -------
+        integral : float
+            value of the integral
+        """
         return np.tensordot(np.diff(partition,n=1),np.delete(values,-1,axis=0),axes=1)
         
     def integrate_q(self,lower,upper,i,j):
-        #Function computing integral of q_ij from a to b
-        #Inbuilt using scipy possible, but for step function better to do by hand
-        #assume lower always single value by upper could be array
+        """
+        Function computing integral of q_ij from lower to upper
+        Note: Inbuilt using scipy is possible, but for step functions it is
+        better to do by hand. 
+        Also, assumes lower always single value by upper could be array
+        Parameters
+        ----------
+        lower : float
+            lower bound of integration
+        upper : array
+            upper bound of integration
+        i : int
+            row index
+        j : int
+            column index
+        
+        Returns
+        -------
+        integral : float
+            value of the integral
+        """
         partition = np.array([lower,np.max(upper)])
         for n in range(int(np.min(lower) // 1440),int(np.max(upper) // 1440) + 1):
             partition = np.append(partition,np.array([n*1440 + x for x in self.xi]))
@@ -356,13 +509,28 @@ class CTMC:
     
     
     def jump_time(self,state,time):
-        #Function to compute time of next jump. Using custom sampling procedure as both inverse cdf and rejection sampling don't work in this case
+        """
+        Function to compute time of next jump. Using custom sampling procedure
+        which works interval by interval from 0, as both inverse cdf and 
+        rejection sampling don't work in this case.
+        Parameters
+        ----------
+        state : int
+            current state of the process
+        time : float
+            time of previous jump
+        
+        Returns
+        -------
+        jump_time : float
+            sampled next jump time
+        """
         probs = []
         partitions = [time]
         int_q = 0
         chosen = False
         #to replace by some max number of iterations
-        for i in range(len(self.xi)*4):
+        for _ in range(len(self.xi)*4):
             q = self.q(state,state,[partitions[-1]])[0]
             n = int(partitions[-1] // 1440)
             next_parts = sorted([float(n*1440 + x) for x in self.xi] + [float((n+1)*1440 + x) for x in self.xi])
@@ -373,23 +541,35 @@ class CTMC:
             probs.append(p)
             int_q += int_add
             
-            
             if random.random() <= p/(1-sum(probs[:-1])):
                 chosen = True
                 break
             
         if not chosen:
-            print('Jump time exceeds 4 days, set to inf')
+            print('Warning:jJump time exceeds 4 days, set to inf')
             return np.inf
         
         u = random.random()
         return partitions[-2] + np.log(1 - u + u*np.exp(int_add))/q
 
     def sample_jump(self,start_state,start_time):
-        #Generates next jump of the process, assuming we start in start_state at start_time
-        # rv = Custom_RV(start_time, lambda x : self.integrate_q(start_time, x, start_state, start_state))
-        # new_time = rv.rvs()
-        # del rv
+        """
+        Generates next jump of the process, assuming we start in start_state 
+        at start_time.
+        Parameters
+        ----------
+        start_state : int
+            current state of the process
+        start_time : float
+            time of previous jump
+        
+        Returns
+        -------
+        new_state : int
+            sampled next state of the process
+        new_time : float
+            sampled next jump time
+        """
         if np.all(self.q(start_state,start_state,self.xi) == 0):
             print('Hit absorbing state')
             return start_state, np.inf
@@ -400,12 +580,30 @@ class CTMC:
         q = [self.q(start_state,j,[new_time])[0] for j in range(self.S)]
         if np.all(q == 0):
             return start_state, new_time
-        else:
-            q[start_state] = 0
-            new_state = random.choices(list(range(self.S)),weights=q,k=1)[0]
-            return new_state, new_time
+        q[start_state] = 0
+        new_state = random.choices(list(range(self.S)),weights=q,k=1)[0]
+        return new_state, new_time
         
     def generate_path(self, start_state, T_0, T_1):
+        """
+        Generates sample path starting in start state from time T_0 up to time 
+        T_1.
+        Parameters
+        ----------
+        start_state : int
+            current state of the process
+        T_0 : float
+            start time of process
+        T_1 : float
+            end time of process sampling
+        
+        Returns
+        -------
+        states : int
+            sampled states of the process
+        times : float
+            sampled jump times
+        """
         #Generates sample path starting in start state from time T_0 up to time T_1
         states = [start_state]
         times = [T_0]
@@ -417,8 +615,23 @@ class CTMC:
     
     
     def model_error(self,N=25):
+        """
+        Function to estimate L1 model error by sampling N paths and comparing 
+        to data.
+        Parameters
+        ----------
+        N : int
+            Number of samples to take
+        
+        Returns
+        -------
+        mean : float
+            estimated expected L1 error
+        sd : float
+            standard error of estimate
+        """
         errors = []
-        for i in range(N):
+        for _ in range(N):
             s,t = self.generate_path(self.states[0], 0, self.times[-1])
             #All partion points for the differences
             partitions = np.union1d(self.times, t)
@@ -434,7 +647,26 @@ class CTMC:
     
     
     def solve_forward_eq(self,t_0,t_1,P_0):
-        #Solves forwards equation for transition semi-group using implicit Euler scheme
+        """
+        Solves forwards equation for transition semi-group using implicit Euler
+        scheme.
+        Parameters
+        ----------
+        t_0 : float
+            start time
+        t_1 : float
+            end time
+        P_0 : np.array
+            initial probability distribution
+        
+        Returns
+        -------
+        sol_times : list
+            list of times solution function is evaluated on
+        P : np.array
+            array of shape (S,len(sol_times)) containing evaluation of the 
+            probability semi-group at sol_times
+        """
         #Array of all xi times plus start and end time
         discon = sorted([t_0,t_1] + [1440*n + x for x in self.xi for n in range(int(t_0//1440),int(t_1//1440) + 1)])
         discon = discon[bisect.bisect(discon,t_0) - 1:bisect.bisect_left(discon,t_1)+1]
@@ -451,13 +683,8 @@ class CTMC:
             M = np.identity(self.S) - h*self.a[:,:,k_val]
             #Using QR decomposition as we solve system many times
             Q, R = np.linalg.qr(M.T)
-            for k in range(steps):
+            for _ in range(steps):
                 P_step = sp.linalg.solve_triangular(R,Q.T @ P[:,-1]).reshape((self.S,1))
                 P = np.hstack([P,P_step])
                 
         return sol_times, P
-            
-            
-            
-            
-        
