@@ -12,4 +12,4 @@ Files Overview:
 - airport_data.pickle contains saved python objects defined in airport_data_scraper.py, used to maintain a record of incomplete download data
 
 Dependencies:
--Python with numpy, scipy, bs4,  playwright, pandas, matplotlib
+- Python with numpy, scipy, bs4,  playwright, pandas, matplotlib
