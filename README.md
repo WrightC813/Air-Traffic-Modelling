@@ -1,22 +1,15 @@
 Air Traffic Modelling
-(Readme file work in progress)
 
 Overview:
-This code aims to collect air traffic data, store it in a SQLite database and then train certain models, especially CTMC type models.
+This code aims to collect air traffic data, store it in a SQLite database and then train a custom CTMC (continuous time Markov chain) model on this data
 
-Files:
+Files Overview:
+- airport_data_scraper.py is the file which scrapes the website www.flightstats.com for flight data and then saves to a database.
+- CTMC_Model.py contains class to handle the CTMC model, which is time inhomogeneous with a 24h-periodic infinitesimal generator. This class takes care of training the model, generating sample trajectories from the model, estimating the error and solving the differential equations to obtain probability information from the model.
+- Exploritory_Analysis.ipynb is a Jupyter notebook containing my analysis of the gathered data, through a number of investigations.
+- Mathematical_Model.pdf provides a short mathematical background on the specific Markov chain model.
+- airport_data.db contains the SQLite database of all gathered flight data
+- airport_data.pickle contains saved python objects defined in airport_data_scraper.py, used to maintain a record of incomplete download data
 
-airport\_traffic\_scrapper.py is the code which scrapes the website www.flightstats.com for flight data and then saves to a database.
-
-air\_traffic\_model.py imports the database, processes into Pandas dataframes and the trains the model. Also produces time series plots of each airport.
-
-CTMC\_Model.py contains class to handle the CTMC model. This class takes care of training the model, generating sample trajectories from the model and estimating the error.
-
-
-
-Still to do:
-
-* Implement multiple airport model to take advantage of the information of inter-network flights
-* Use likelihood ratio tests to investigate different models coming from different numbers of free parameters
-* Use seperate validation set and L1 error to choose model structures, and compare with above statistical approach
-
+Dependencies:
+-Python with numpy, scipy, bs4,  playwright, pandas, matplotlib
